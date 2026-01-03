@@ -1,0 +1,97 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  order     Int      @default(0)
+  sites     Site[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Site {
+  id          String    @id @default(cuid())
+  name        String
+  url         String
+  description String
+  iconUrl     String?
+  categoryId  String
+  category    Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  isPublished Boolean   @default(false)
+  order       Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  visits      Visit[]
+
+  @@index([categoryId])
+  @@index([isPublished])
+  @@index([categoryId, isPublished])
+  @@index([order])
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String?
+  avatar    String?
+  role      UserRole @default(ADMIN)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum UserRole {
+  ADMIN
+  EDITOR
+}
+
+model SystemSettings {
+  id               String   @id @default("default") @map("id")
+  siteName         String   @default("Conan Nav") @map("site_name")
+  siteDescription  String   @default("简洁现代化的网址导航系统") @map("site_description")
+  siteLogo         String?  @map("site_logo")
+  favicon          String?  @map("favicon")
+  pageSize         Int      @default(20) @map("page_size")
+  // Footer settings
+  showFooter        Boolean  @default(true) @map("show_footer")
+  footerCopyright  String   @map("footer_copyright")  // 默认值由 seed.ts 动态生成
+  footerLinks      Json     @default("[]") @map("footer_links")
+  showAdminLink    Boolean  @default(true) @map("show_admin_link")
+  // ICP filing settings (备案信息)
+  showIcp          Boolean  @default(false) @map("show_icp")
+  icpNumber        String?  @map("icp_number")
+  icpLink          String?  @map("icp_link")
+  // Visit tracking settings
+  enableVisitTracking Boolean @default(true) @map("enable_visit_tracking")
+  // GitHub link
+  githubUrl        String?  @map("github_url")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("SystemSettings")
+}
+
+model Visit {
+  id        String   @id @default(cuid())
+  siteId    String
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  ipAddress String?
+  userAgent String?
+  referer   String?
+  visitedAt DateTime @default(now())
+
+  @@index([siteId])
+  @@index([visitedAt])
+  @@index([siteId, visitedAt])
+}
