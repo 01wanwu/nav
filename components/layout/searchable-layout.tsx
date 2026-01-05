@@ -4,7 +4,6 @@ import { useState, useMemo } from "react"
 import { ScrollHeader } from "./scroll-header"
 import { Footer } from "./footer"
 import { SiteCard } from "./site-card"
-import { Separator } from "@/components/ui/separator"
 
 interface Site {
   id: string
@@ -17,13 +16,7 @@ interface Site {
   }
 }
 
-interface ClientHomePageProps {
-  categories: Array<{
-    id: string
-    name: string
-    slug: string
-    sites?: Site[]
-  }>
+interface SearchableLayoutProps {
   allCategories: Array<{
     id: string
     name: string
@@ -31,14 +24,17 @@ interface ClientHomePageProps {
   }>
   flatSites: Site[]
   siteName?: string
+  currentCategory?: string
+  children: React.ReactNode
 }
 
-export function ClientHomePage({
-  categories,
+export function SearchableLayout({
   allCategories,
   flatSites,
-  siteName
-}: ClientHomePageProps) {
+  siteName,
+  currentCategory,
+  children,
+}: SearchableLayoutProps) {
   const [searchQuery, setSearchQuery] = useState("")
 
   const filteredSites = useMemo(() => {
@@ -61,11 +57,13 @@ export function ClientHomePage({
         siteName={siteName}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
+        currentCategory={currentCategory}
       />
 
       <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8 page-enter">
         <div className="mx-auto max-w-7xl w-full">
           {isSearching ? (
+            // 搜索结果
             <>
               <div className="mb-8">
                 <h1 className="text-3xl font-bold tracking-tight">搜索结果</h1>
@@ -93,45 +91,8 @@ export function ClientHomePage({
               )}
             </>
           ) : (
-            <>
-              {categories.length > 0 ? (
-                <div className="space-y-12">
-                  {categories.map((category, index) => (
-                    <section key={category.id} id={`category-${category.slug}`}>
-                      <div className="flex items-center justify-between mb-6">
-                        <h2 className="text-2xl font-bold tracking-tight">{category.name}</h2>
-                        {category.sites && category.sites.length > 0 && (
-                          <span className="text-sm text-muted-foreground">
-                            {category.sites.length} 个网站
-                          </span>
-                        )}
-                      </div>
-
-                      {category.sites && category.sites.length > 0 ? (
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                          {category.sites.map((site) => (
-                            <SiteCard key={site.id} site={site} />
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="flex min-h-[200px] items-center justify-center rounded-lg border">
-                          <p className="text-sm text-muted-foreground">暂无网站</p>
-                        </div>
-                      )}
-
-                      {index < categories.length - 1 && <Separator className="mt-12" />}
-                    </section>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex min-h-[400px] flex-col items-center justify-center rounded-lg border">
-                  <p className="text-lg text-muted-foreground">暂无分类数据</p>
-                  <p className="text-sm text-muted-foreground mt-2">
-                    请先在后台创建分类和网站
-                  </p>
-                </div>
-              )}
-            </>
+            // 页面内容（由父组件传入）
+            children
           )}
         </div>
       </main>

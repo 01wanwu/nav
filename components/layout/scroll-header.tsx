@@ -12,15 +12,17 @@ interface ScrollHeaderProps {
   siteName?: string
   searchQuery?: string
   onSearchChange?: (query: string) => void
+  currentCategory?: string
 }
 
 export function ScrollHeader({
   categories,
   siteName,
   searchQuery = "",
-  onSearchChange
+  onSearchChange,
+  currentCategory: initialCategory = ""
 }: ScrollHeaderProps) {
-  const [activeCategory, setActiveCategory] = useState("")
+  const [activeCategory, setActiveCategory] = useState(initialCategory)
 
   useEffect(() => {
     if (typeof window === "undefined") return
