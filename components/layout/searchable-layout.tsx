@@ -4,6 +4,7 @@ import { useState, useMemo } from "react"
 import { ScrollHeader } from "./scroll-header"
 import { Footer } from "./footer"
 import { SiteCard } from "./site-card"
+import { Badge } from "@/components/ui/badge"
 
 interface Site {
   id: string
@@ -65,13 +66,13 @@ export function SearchableLayout({
           {isSearching ? (
             // 搜索结果
             <>
-              <div className="mb-8">
+              <div className="mb-8 flex items-center gap-3">
                 <h1 className="text-3xl font-bold tracking-tight">搜索结果</h1>
-                <p className="text-muted-foreground mt-2">
+                <Badge variant="secondary" className="text-sm">
+                  {filteredSites.length}
+                </Badge>
+                <p className="text-muted-foreground">
                   关键词：<span className="font-semibold text-foreground">「{searchQuery}」</span>
-                  <span className="ml-2">
-                    找到 <span className="font-semibold">{filteredSites.length}</span> 个结果
-                  </span>
                 </p>
               </div>
 

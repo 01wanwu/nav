@@ -2,6 +2,7 @@ import { SearchableLayout } from "@/components/layout/searchable-layout"
 import { SiteCard } from "@/components/layout/site-card"
 import { getAllCategories, getCategoryBySlug, getSystemSettings, getSites } from "@/lib/actions"
 import { notFound } from "next/navigation"
+import { Badge } from "@/components/ui/badge"
 
 // ISR 配置：每 1 小时自动重新生成页面
 // 当后台更新数据时，revalidatePath("/category/[slug]") 会触发立即重新生成

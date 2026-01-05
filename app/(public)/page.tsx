@@ -2,6 +2,7 @@ import { SearchableLayout } from "@/components/layout/searchable-layout"
 import { SiteCard } from "@/components/layout/site-card"
 import { getAllCategories, getCategories, getSystemSettings, getSites } from "@/lib/actions"
 import { Separator } from "@/components/ui/separator"
+import { Badge } from "@/components/ui/badge"
 
 // ISR 配置：每 1 小时自动重新生成页面
 // 当后台更新数据时，revalidatePath("/") 会触发立即重新生成
@@ -29,9 +30,9 @@ export default async function HomePage() {
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold tracking-tight">{category.name}</h2>
                 {category.sites && category.sites.length > 0 && (
-                  <span className="text-sm text-muted-foreground">
-                    {category.sites.length} 个网站
-                  </span>
+                  <Badge variant="secondary" className="text-sm">
+                    {category.sites.length}
+                  </Badge>
                 )}
               </div>
 
