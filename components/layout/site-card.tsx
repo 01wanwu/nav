@@ -226,6 +226,8 @@ export function SiteCard({ site, density: propDensity, dragEnabled = false }: Si
       {/* TooltipProvider 由容器层（SearchableLayout 等）统一提供，避免每卡一棵 Provider 树 */}
       <Tooltip>
           <TooltipTrigger asChild>
+            {/* 操作按钮移出 Link：交互元素不得嵌套（键盘 Enter 会命中外层链接） */}
+            <div className="group relative">
             <Link
               href={site.url}
               target="_blank"
@@ -233,7 +235,7 @@ export function SiteCard({ site, density: propDensity, dragEnabled = false }: Si
               onClick={handleCardClick}
               draggable={dragEnabled ? false : undefined}
               aria-label={t("visit", { name: site.name })}
-              className={`group relative flex h-12 items-center gap-2.5 rounded-lg border px-3 py-2 text-card-foreground shadow-xs transition-all duration-200 ease-spring hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98] select-none ${
+              className={`relative flex h-12 items-center gap-2.5 rounded-lg border px-3 py-2 text-card-foreground shadow-xs transition-all duration-200 ease-spring hover:-translate-y-0.5 hover:shadow-md active:scale-[0.98] select-none ${
                 site.isPinned
                   ? "border-amber-500/30 bg-amber-500/[0.04] hover:border-amber-500/60 hover:bg-amber-500/[0.08]"
                   : "border-border/80 bg-card hover:border-primary/40 hover:bg-accent/40"
@@ -241,7 +243,7 @@ export function SiteCard({ site, density: propDensity, dragEnabled = false }: Si
             >
               <SiteIcon iconSrc={iconSrc} name={site.name} size="compact" />
 
-              <div className="flex-1 min-w-0 pr-1 flex items-center gap-1.5">
+              <div className="flex-1 min-w-0 pr-6 flex items-center gap-1.5">
                 <span className="truncate text-xs sm:text-sm font-medium text-foreground transition-colors group-hover:text-primary">
                   {site.name}
                 </span>
@@ -251,25 +253,27 @@ export function SiteCard({ site, density: propDensity, dragEnabled = false }: Si
                   </span>
                 )}
               </div>
+            </Link>
 
               {isAdmin ? (
                 <button
                   type="button"
                   onClick={handleEdit}
+                  aria-label={t("edit")}
                   title={t("edit")}
-                  className="shrink-0 rounded p-1 text-muted-foreground opacity-0 -translate-x-1 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 hover:bg-muted hover:text-primary active:scale-90"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 shrink-0 rounded p-1 text-muted-foreground opacity-0 -translate-x-1 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 group-focus-within:opacity-100 group-focus-within:translate-x-0 hover:bg-muted hover:text-primary active:scale-90"
                 >
                   <Pencil className="h-3.5 w-3.5" />
                 </button>
               ) : (
                 <div
-                  className="shrink-0 opacity-0 -translate-x-1 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 shrink-0 opacity-0 -translate-x-1 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0"
                   title={t("visit", { name: site.name })}
                 >
                   <ExternalLink className="h-3 w-3 text-muted-foreground" />
                 </div>
               )}
-            </Link>
+            </div>
           </TooltipTrigger>
           <TooltipContent
             side="top"
@@ -301,14 +305,13 @@ export function SiteCard({ site, density: propDensity, dragEnabled = false }: Si
             </p>
           </TooltipContent>
         </Tooltip>
-      {detailOpen && (
-        <SiteDetailDialog
-          site={site}
-          open={detailOpen}
-          onOpenChange={setDetailOpen}
-        />
-      )}
-      {isAdmin && editDialogOpen && (
+      {/* 常挂载 + open 受控：条件卸载会砍掉 Radix 关闭动画并瞬间解除滚动锁定 */}
+      <SiteDetailDialog
+        site={site}
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+      />
+      {isAdmin && (
         <SiteFormDialog
           open={editDialogOpen}
           onOpenChange={setEditDialogOpen}
@@ -326,6 +329,8 @@ export function SiteCard({ site, density: propDensity, dragEnabled = false }: Si
   // ================= 标准模式 (Standard Mode) =================
   return (
     <>
+    {/* 操作按钮移出 Link：交互元素不得嵌套（键盘 Enter 会命中外层链接而非按钮） */}
+    <div className="group relative block h-full select-none">
     <Link
       href={site.url}
       target="_blank"
@@ -333,7 +338,7 @@ export function SiteCard({ site, density: propDensity, dragEnabled = false }: Si
       onClick={handleCardClick}
       draggable={dragEnabled ? false : undefined}
       aria-label={t("visit", { name: site.name })}
-      className="group relative block h-full select-none"
+      className="block h-full"
     >
       <div className={`relative flex h-full items-start gap-3.5 overflow-hidden rounded-xl border p-3.5 sm:p-4 text-card-foreground shadow-xs transition-all duration-250 ease-spring hover:-translate-y-1 hover:shadow-card-hover active:scale-[0.98] active:translate-y-0 ${
         site.isPinned
@@ -369,49 +374,51 @@ export function SiteCard({ site, density: propDensity, dragEnabled = false }: Si
             <p className="mt-0.5 text-xs text-muted-foreground/60 italic">{t("noDescription")}</p>
           )}
         </div>
-
-        {/* 悬停快捷操作 */}
-        <div className="absolute right-2.5 top-2.5 flex items-center gap-0.5 opacity-0 translate-x-1 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0">
-          <button
-            onClick={handleCopy}
-            title={copied ? t("copied") : t("copy")}
-            type="button"
-            className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            {copied ? (
-              <Check className="h-3 w-3 text-green-500 animate-in zoom-in-50 duration-200" />
-            ) : (
-              <Copy className="h-3 w-3" />
-            )}
-          </button>
-          {isAdmin ? (
-            <button
-              onClick={handleEdit}
-              title={t("edit")}
-              type="button"
-              className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-all duration-200 hover:bg-muted hover:text-primary active:scale-90"
-            >
-              <Pencil className="h-3 w-3" />
-            </button>
-          ) : (
-            <div
-              className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
-              title={t("visit", { name: site.name })}
-            >
-              <ExternalLink className="h-3 w-3" />
-            </div>
-          )}
-        </div>
       </div>
     </Link>
-    {detailOpen && (
-      <SiteDetailDialog
-        site={site}
-        open={detailOpen}
-        onOpenChange={setDetailOpen}
-      />
-    )}
-    {isAdmin && editDialogOpen && (
+
+    {/* 悬停/键盘聚焦快捷操作（绝对定位于卡片容器，Link 之外） */}
+    <div className="absolute right-2.5 top-2.5 flex items-center gap-0.5 opacity-0 translate-x-1 transition-all duration-200 ease-out group-hover:opacity-100 group-hover:translate-x-0 group-focus-within:opacity-100 group-focus-within:translate-x-0">
+      <button
+        onClick={handleCopy}
+        aria-label={copied ? t("copied") : t("copy")}
+        title={copied ? t("copied") : t("copy")}
+        type="button"
+        className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        {copied ? (
+          <Check className="h-3 w-3 text-green-500 animate-in zoom-in-50 duration-200" />
+        ) : (
+          <Copy className="h-3 w-3" />
+        )}
+      </button>
+      {isAdmin ? (
+        <button
+          onClick={handleEdit}
+          aria-label={t("edit")}
+          title={t("edit")}
+          type="button"
+          className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-all duration-200 hover:bg-muted hover:text-primary active:scale-90"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+      ) : (
+        <div
+          className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
+          title={t("visit", { name: site.name })}
+        >
+          <ExternalLink className="h-3 w-3" />
+        </div>
+      )}
+    </div>
+    </div>
+    {/* 常挂载 + open 受控：条件卸载会砍掉 Radix 关闭动画并瞬间解除滚动锁定（页面跳动） */}
+    <SiteDetailDialog
+      site={site}
+      open={detailOpen}
+      onOpenChange={setDetailOpen}
+    />
+    {isAdmin && (
       <SiteFormDialog
         open={editDialogOpen}
         onOpenChange={setEditDialogOpen}

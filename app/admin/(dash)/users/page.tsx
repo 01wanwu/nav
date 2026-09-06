@@ -211,7 +211,8 @@ export default function AdminSettingsPage() {
         toast.success(t("saveSuccess"), {
           description: t("saveSuccessDesc"),
         })
-        setTimeout(() => window.location.reload(), 500)
+        // 不再 window.location.reload()：本地 state 已是提交值，
+        // 硬刷新会丢滚动位置并把设置页导航重置回 basic 区块
       } else {
         toast.error(t("saveFailed"), {
           description: (result as { error?: string }).error || t("saveFailedDesc"),

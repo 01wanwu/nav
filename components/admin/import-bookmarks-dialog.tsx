@@ -139,7 +139,12 @@ export function ImportBookmarksDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[600px]">
+        {/* 导入进行中阻止 Esc/点遮罩关闭：后台任务仍在跑，关窗会让用户误以为已取消 */}
+        <DialogContent
+          className="sm:max-w-[600px]"
+          onEscapeKeyDown={(e) => isImporting && e.preventDefault()}
+          onInteractOutside={(e) => isImporting && e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle>{t("title")}</DialogTitle>
             <DialogDescription>
