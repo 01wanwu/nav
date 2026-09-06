@@ -36,6 +36,12 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      # GHCR 镜像名强制全小写：属主名含大写（如 bestZwei）会导致 buildx 报
+      # "repository name must be lowercase"，这里统一转小写
+      - name: Normalize image owner to lowercase
+        id: image
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
@@ -46,8 +52,8 @@ jobs:
             APP_VERSION=${{ steps.version.outputs.VERSION }}
             GIT_SHA=${{ github.sha }}
           tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+            ghcr.io/${{ steps.image.outputs.owner }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}
+            ghcr.io/${{ steps.image.outputs.owner }}/${{ env.IMAGE_NAME }}:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.version=${{ steps.version.outputs.VERSION }}
