@@ -641,6 +641,8 @@
       "deleteSuccess": "ワークスペースを削除しました",
       "deleteTitle": "ワークスペースを削除",
       "deleteDesc": "ワークスペース「{name}」を削除しますか？カテゴリを持たない非デフォルトのワークスペースのみ削除できます。",
+      "deleteDomainTitle": "ドメインの解除",
+      "deleteDomainDesc": "{host} を解除しますか？解除後、このドメインからこのワークスペースにはアクセスできません。",
       "actionFailed": "操作に失敗しました",
       "domains": "ドメインバインド",
       "noDomains": "未バインド（デフォルト照合）",

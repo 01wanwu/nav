@@ -641,6 +641,8 @@
       "deleteSuccess": "Workspace deleted",
       "deleteTitle": "Delete Workspace",
       "deleteDesc": "Delete workspace \"{name}\"? Only workspaces without categories and non-default ones can be deleted.",
+      "deleteDomainTitle": "Unbind Domain",
+      "deleteDomainDesc": "Unbind {host}? The domain will no longer serve this workspace.",
       "actionFailed": "Action failed",
       "domains": "Domain Bindings",
       "noDomains": "No domains (default matching)",

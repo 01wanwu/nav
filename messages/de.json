@@ -641,6 +641,8 @@
       "deleteSuccess": "Workspace gelöscht",
       "deleteTitle": "Workspace löschen",
       "deleteDesc": "Workspace „{name}“ löschen? Nur Workspaces ohne Kategorien und nicht-Standard-Workspaces können gelöscht werden.",
+      "deleteDomainTitle": "Domain entkoppeln",
+      "deleteDomainDesc": "{host} wirklich entkoppeln? Die Domain dient danach nicht mehr für diesen Workspace.",
       "actionFailed": "Aktion fehlgeschlagen",
       "domains": "Domain-Bindungen",
       "noDomains": "Keine Domains (Standard-Zuordnung)",
