@@ -101,10 +101,14 @@ export default function AdminCategoriesPage() {
   // 加载分类列表
   // silent=true 时跳过 loading 态：用于删除/保存成功后的保底刷新，
   // 本地状态已更新，整表替换成 spinner 再重建会造成明显闪动
+  const loadGenerationRef = useRef(0)
   const loadCategories = async (currentPage = page, silent = false) => {
+    const generation = ++loadGenerationRef.current
     if (!silent) setLoading(true)
     try {
       const result = await getCategoriesWithPagination({ page: currentPage, pageSize: 20 })
+      // 过期响应：已有更新的请求在途或完成，丢弃本次结果（含错误提示）
+      if (generation !== loadGenerationRef.current) return
       if (result.success && result.data) {
         // 删除末页最后一条后页码越界：clamp 回最后一个有效页重新拉取，
         // 避免「空列表 + 分页控件隐藏」的死端
@@ -128,11 +132,13 @@ export default function AdminCategoriesPage() {
         })
       }
     } catch (error) {
+      if (generation !== loadGenerationRef.current) return
       toast.error(tc("loadFailed"), {
         description: tc("retryLater"),
       })
     } finally {
-      setLoading(false)
+      // 仅最新一代请求有权关 loading（被丢弃的请求可能更早返回）
+      if (generation === loadGenerationRef.current) setLoading(false)
     }
   }
 
@@ -255,6 +261,7 @@ export default function AdminCategoriesPage() {
 
   // 页面切换处理
   const handlePageChange = (newPage: number) => {
+    if (loading) return
     if (newPage < 1 || (pagination && newPage > pagination.totalPages)) return
     loadCategories(newPage)
   }
@@ -372,7 +379,7 @@ export default function AdminCategoriesPage() {
                       <TableRow
                         key={category.id}
                         data-flip-id={category.id}
-                        draggable
+                        draggable={!isSavingOrder}
                         onDragStart={() => handleDragStart(category.id)}
                         onDragOver={(e) => handleDragOver(e, category.id)}
                         onDragEnd={handleDragEnd}

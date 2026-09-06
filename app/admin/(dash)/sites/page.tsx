@@ -146,6 +146,10 @@ export default function AdminSitesPage() {
   const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([])
 
   // 加载网站列表
+  // 请求代际守卫：快速连点页码/筛选与搜索并发时，慢的旧响应不得覆盖新状态
+  // （照搬 dashboard 页 loadGenerationRef 模式）
+  const loadGenerationRef = useRef(0)
+
   // silent=true 时跳过 loading 态：用于拖拽排序保存后的保底刷新，
   // 本地顺序已正确，整表替换成 spinner 再重建会造成明显闪动
   const loadSites = async (
@@ -153,6 +157,7 @@ export default function AdminSitesPage() {
     currentPageSize = pageSize,
     silent = false
   ) => {
+    const generation = ++loadGenerationRef.current
     if (!silent) setLoading(true)
     try {
       const result = await getSitesWithPagination({
@@ -165,6 +170,8 @@ export default function AdminSitesPage() {
         sortBy,
         sortDir,
       })
+      // 过期响应：已有更新的请求在途或完成，丢弃本次结果（含错误提示）
+      if (generation !== loadGenerationRef.current) return
       if (result.success && result.data) {
         // 删除末页最后一条/筛选缩小结果后页码越界：clamp 回最后一个有效页重新拉取，
         // 避免「空列表 + 分页控件隐藏」的死端（与分类页口径一致）
@@ -186,11 +193,13 @@ export default function AdminSitesPage() {
         })
       }
     } catch (error) {
+      if (generation !== loadGenerationRef.current) return
       toast.error(tc("loadFailed"), {
         description: tc("retryLater"),
       })
     } finally {
-      setLoading(false)
+      // 仅最新一代请求有权关 loading（被丢弃的请求可能更早返回）
+      if (generation === loadGenerationRef.current) setLoading(false)
     }
   }
 
@@ -567,6 +576,7 @@ export default function AdminSitesPage() {
 
   // 页面切换处理
   const handlePageChange = (newPage: number) => {
+    if (loading) return
     if (newPage < 1 || (pagination && newPage > pagination.totalPages)) return
     loadSites(newPage)
   }
@@ -996,7 +1006,7 @@ export default function AdminSitesPage() {
                     <TableRow
                       key={site.id}
                       data-flip-id={site.id}
-                      draggable={dragOrderEnabled}
+                      draggable={dragOrderEnabled && !savingOrder}
                       onDragStart={() => handleDragStartRow(site.id)}
                       onDragEnter={dragOrderEnabled ? () => handleDragEnterRow(site.id) : undefined}
                       onDragOver={(e) => dragOrderEnabled && e.preventDefault()}
