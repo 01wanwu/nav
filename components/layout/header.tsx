@@ -328,6 +328,28 @@ export function Header({
                   <DrawerTitle>{t("selectCategory")}</DrawerTitle>
                 </DrawerHeader>
                 <div className="grid gap-1 px-4 py-6">
+                  {/* 移动端搜索入口：桌面搜索框为 hidden sm:block，<640px 只有这里能搜索。
+                      图鉴模式下搜索结果分支不渲染（见 searchable-layout），维持无搜索设计 */}
+                  {!overviewMode && (
+                    <div className="relative mb-2">
+                      <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground pointer-events-none select-none" />
+                      <Input
+                        type="text"
+                        placeholder={t("searchPlaceholder")}
+                        className="h-9 w-full pl-8 pr-3 text-xs bg-muted/40"
+                        value={searchQuery}
+                        onChange={(e) => onSearchChange?.(e.target.value)}
+                        onKeyDown={(e) => {
+                          // isComposing：中文输入法确认候选词的 Enter 不算提交
+                          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                            e.preventDefault()
+                            onSearchSubmit?.(searchQuery)
+                            setMobileMenuOpen(false)
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
                   {categories.map((category) => (
                     <Link
                       key={category.id}
@@ -429,7 +451,8 @@ export function Header({
                 value={searchQuery}
                 onChange={(e) => onSearchChange?.(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && onSearchSubmit) {
+                  // isComposing：中文输入法确认候选词的 Enter 不算提交搜索
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing && onSearchSubmit) {
                     e.preventDefault()
                     onSearchSubmit(searchQuery)
                   }
