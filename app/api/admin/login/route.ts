@@ -18,13 +18,24 @@ const loginSchema = z.object({
   password: z.string().min(6, "密码至少需要6个字符"),
 })
 
-// 提取客户端 IP：反向代理场景取 x-forwarded-for 首个地址
+// 提取客户端 IP（限流维度）。
+// 优先级：CF-Connecting-IP（Cloudflare 边缘覆写、不可被客户端伪造，且自托管
+// 部署最常见的入口就是 CF）→ x-real-ip（nginx 等常规反代注入）→
+// x-forwarded-for 首段 → unknown。
+// 注意 XFF 首段在「边缘代理不覆写」时可被客户端伪造（CF 就会保留客户端
+// 自带的 XFF），仅作最后回退；都没有时统一记为 unknown——此时所有访客
+// 共享一个限流桶，因此 IP 维度阈值必须足够宽松，避免陌生人互锁。
 function getClientIp(request: NextRequest): string {
+  const cfIp = request.headers.get("cf-connecting-ip")?.trim()
+  if (cfIp) return cfIp
+  const realIp = request.headers.get("x-real-ip")?.trim()
+  if (realIp) return realIp
   const forwarded = request.headers.get("x-forwarded-for")
   if (forwarded) {
-    return forwarded.split(",")[0]!.trim()
+    const first = forwarded.split(",")[0]?.trim()
+    if (first) return first
   }
-  return request.headers.get("x-real-ip") || "unknown"
+  return "unknown"
 }
 
 export async function POST(request: NextRequest) {

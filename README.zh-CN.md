@@ -312,6 +312,9 @@ pm2 save
 | `NEXTAUTH_URL` | 应用完整 URL | `http://localhost:3000` 或 `https://your-domain.com` | ❌（Docker 有默认值） |
 | `POSTGRES_PASSWORD` | `postgres` compose profile 的 PostgreSQL 密码 | 随机长字符串 | ✅（仅 postgres profile） |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | 初始管理员账号，角色为**超级管理员**（仅首次 seed 生效，已存在同名账号时不覆盖） | 邮箱 / 强口令 | ❌ |
+| `LOGIN_RATE_LIMIT_DISABLED` | 整体关闭登录限流（内网/可信环境） | `true` | ❌ |
+| `LOGIN_RATE_LIMIT_ACCOUNT_MAX` / `_IP_MAX` | 登录失败阈值：同账号 / 同 IP（默认 10 次 / 30 次，15 分钟窗口） | 数字 | ❌ |
+| `LOGIN_RATE_LIMIT_LOCK_SECONDS` | 触发锁定时长（默认 300 秒，固定时长无递增退避） | 数字 | ❌ |
 
 **Docker 部署**：配置 `SESSION_SECRET`（或 `NEXTAUTH_SECRET`）即可，数据库默认 SQLite 零配置；需要 PostgreSQL 时设置 `DB_PROVIDER=postgres` 与 `POSTGRES_PASSWORD` 并启用 postgres profile。
 
