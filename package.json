@@ -20,6 +20,7 @@
     "db:seed:full": "npx tsx prisma/seed.ts full",
     "db:migrate:deploy": "npx prisma migrate deploy",
     "db:migrate:dev": "npx prisma migrate dev",
+    "db:ensure-super-admin": "node scripts/ensure-super-admin.mjs",
     "db:studio": "npx prisma studio --schema prisma/schema.sqlite.prisma"
   },
   "prisma": {

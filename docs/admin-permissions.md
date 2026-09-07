@@ -113,15 +113,20 @@ The initial account created by `prisma/seed.ts` (`ADMIN_EMAIL` / `ADMIN_PASSWORD
    - PostgreSQL: `npm run db:migrate:deploy`
    - SQLite (default): `npm run db:push` (creates the `AuditLog` table)
    - Docker: `entrypoint.sh` does this automatically on start
-2. **Existing accounts keep their role** — all of them stay `ADMIN`. Right after the upgrade there is
-   no super admin at all, so the user management and audit log entries stay hidden. Promote a trusted
-   account with SQL:
+2. **Super admin is filled in automatically.** Existing accounts are never rewritten wholesale, but a
+   system without a single super admin is an unusable intermediate state, so startup performs a
+   one-off fix-up: if no `SUPER_ADMIN` exists, the **oldest** admin account is promoted
+   (`scripts/ensure-super-admin.mjs`, run by Docker and by `npm run db:ensure-super-admin`).
+   It is idempotent and promotion-only: nothing happens once a super admin exists.
+3. To move the super admin role to a different account, promote the new one first, then demote the old
+   one (never the other way round, or you briefly end up with no super admin):
 
 ```sql
-UPDATE "User" SET "role" = 'SUPER_ADMIN' WHERE "email" = 'you@example.com';
+UPDATE "User" SET "role" = 'SUPER_ADMIN' WHERE "email" = 'new-owner@example.com';
+UPDATE "User" SET "role" = 'ADMIN'      WHERE "email" = 'old-owner@example.com';
 ```
 
-3. Sign in again (old tokens without the `iat` claim are rejected by the revocation check — expected).
+4. Sign in again (old tokens without the `iat` claim are rejected by the revocation check — expected).
 
 > PostgreSQL 12+ is required: the migration uses `ALTER TYPE ... ADD VALUE`, which older versions do
 > not allow inside a transaction block.

@@ -66,4 +66,15 @@ if (!seeded) {
   process.exit(0)
 }
 
+// 升级补足：存量账号全部是 ADMIN 时提升最早的一个为 SUPER_ADMIN。
+// 仅警告不阻断——没有超管只是「用户管理/审计日志不可用」，不应让构建失败
+const ensured = run('node scripts/ensure-super-admin.mjs postgres', {
+  retries: 2,
+  label: 'ensure-super-admin',
+})
+
+if (!ensured) {
+  console.warn('[db-bootstrap] 超管补足失败仅警告，可稍后手动执行 npm run db:ensure-super-admin')
+}
+
 console.log('[db-bootstrap] PostgreSQL 引导完成')

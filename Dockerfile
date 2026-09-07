@@ -65,6 +65,8 @@ COPY --from=builder /app/prisma ./prisma
 # seed 脚本经 tsx 直接执行，依赖 lib/prisma.ts 源文件与 tsconfig 路径别名
 COPY --from=builder /app/lib ./lib
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
+# 启动期脚本：超管补足（scripts/ensure-super-admin.mjs）由 entrypoint 调用
+COPY --from=builder /app/scripts ./scripts
 
 # 复制运行时依赖（数据库初始化和 seed 脚本需要；闭包由
 # scripts/pack-runner-deps.mjs 在 builder 阶段动态计算打包）

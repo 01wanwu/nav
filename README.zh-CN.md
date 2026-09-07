@@ -362,14 +362,18 @@ git pull && npm install && npm start
 
 ### 升级到多管理员版本（SUPER_ADMIN / ADMIN）
 
-升级会新增 `SUPER_ADMIN` 角色与 `AuditLog` 审计表，**已有账号角色保持 `ADMIN` 不变**——
-即升级后还没有任何超级管理员，「用户管理 / 审计日志」入口不会显示。需手动提升一个信任账号：
+升级会新增 `SUPER_ADMIN` 角色与 `AuditLog` 审计表。已有账号不会逐个改写，但**系统里至少要有一个超管**，
+否则「用户管理 / 审计日志」入口不可用——因此启动时会自动补足：**若不存在任何超管，就把最早创建的管理员提升为超管**
+（幂等、只升不降；也可手动执行 `npm run db:ensure-super-admin`）。
+
+想把超管换成别的账号时（先升新的、再降旧的，顺序不可颠倒）：
 
 ```sql
-UPDATE "User" SET "role" = 'SUPER_ADMIN' WHERE "email" = 'you@example.com';
+UPDATE "User" SET "role" = 'SUPER_ADMIN' WHERE "email" = 'new-owner@example.com';
+UPDATE "User" SET "role" = 'ADMIN'      WHERE "email" = 'old-owner@example.com';
 ```
 
-然后重新登录一次。全新部署不受影响：seed 创建的初始账号就是超级管理员。
+最后重新登录一次。全新部署不受影响：seed 创建的初始账号就是超级管理员。
 完整说明见[管理员与权限体系](docs/admin-permissions.zh-CN.md#从单管理员版本升级)。
 
 

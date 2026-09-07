@@ -92,6 +92,12 @@ if [ "$DB_MODE" = "sqlite" ]; then
 
   seed_if_needed sqlite
 
+  # 升级补足：多管理员版本上线后，存量部署的账号全部仍是 ADMIN，
+  # 系统内没有超管（用户管理/审计日志不可用）。此处提升最早的管理员为超管。
+  # 失败不阻断启动——可事后按 docs/admin-permissions 的说明用 SQL 手动提升
+  node scripts/ensure-super-admin.mjs sqlite ||
+    echo "⚠️  超管补足检查未成功执行（不影响启动），必要时请按文档手动提升超管"
+
   echo "🚀 启动应用..."
   # --max-http-header-size：测活探测需要，避免 Google 等站点响应头超 undici 16KB 上限导致误判失效
   exec node --max-http-header-size=65536 server.js
@@ -230,6 +236,10 @@ else
 fi
 
 seed_if_needed postgres
+
+# 升级补足：同上（PostgreSQL 分支）
+node scripts/ensure-super-admin.mjs postgres ||
+  echo "⚠️  超管补足检查未成功执行（不影响启动），必要时请按文档手动提升超管"
 
 echo "🚀 启动应用..."
 # --max-http-header-size：测活探测需要，避免 Google 等站点响应头超 undici 16KB 上限导致误判失效

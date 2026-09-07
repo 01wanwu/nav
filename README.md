@@ -361,15 +361,20 @@ git pull && npm install && npm start
 
 ### Upgrading to the multi-admin version (SUPER_ADMIN / ADMIN)
 
-The upgrade adds the `SUPER_ADMIN` role and the `AuditLog` table. **Existing accounts keep the
-`ADMIN` role**, so right after upgrading there is no super admin and the "Users" / "Audit Log"
-entries stay hidden. Promote one trusted account manually:
+The upgrade adds the `SUPER_ADMIN` role and the `AuditLog` table. Existing accounts are not rewritten
+one by one, but the system needs **at least one super admin**, otherwise the "Users" / "Audit Log"
+entries are unusable — so startup fills the gap automatically: **if no super admin exists, the oldest
+admin account is promoted** (idempotent, promotion-only; you can also run
+`npm run db:ensure-super-admin` manually).
+
+To move the super admin role to another account (promote the new one first, then demote the old one):
 
 ```sql
-UPDATE "User" SET "role" = 'SUPER_ADMIN' WHERE "email" = 'you@example.com';
+UPDATE "User" SET "role" = 'SUPER_ADMIN' WHERE "email" = 'new-owner@example.com';
+UPDATE "User" SET "role" = 'ADMIN'      WHERE "email" = 'old-owner@example.com';
 ```
 
-Then sign in again. Fresh installs are unaffected — the seeded account is always a super admin.
+Finally, sign in again. Fresh installs are unaffected — the seeded account is always a super admin.
 Full details: [Admin Roles & Permissions](docs/admin-permissions.md#upgrading-from-the-single-admin-version).
 
 ---

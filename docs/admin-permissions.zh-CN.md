@@ -98,14 +98,18 @@
    - PostgreSQL：`npm run db:migrate:deploy`
    - SQLite（默认）：`npm run db:push`（自动建 AuditLog 表）
    - Docker：`entrypoint.sh` 启动时自动完成
-2. **已有账号角色不变**，全部保持 ADMIN。也就是说升级后没有任何超管，
-   用户管理与审计日志入口不会出现。用 SQL 把信任账号提升为超管：
+2. **超管自动补足**：已有账号不会全部改写，但「系统里一个超管都没有」是不可用的中间态，
+   因此启动时会做一次性补足——若不存在任何 SUPER_ADMIN，就把**最早创建**的管理员提升为超管
+   （`scripts/ensure-super-admin.mjs`，Docker / `npm run db:ensure-super-admin` 均会执行）。
+   幂等且只升不降：已有超管时直接跳过。
+3. 想把超管换成别的账号时，先提升目标账号、再降级原超管（顺序不可颠倒，否则中途无超管）：
 
 ```sql
-UPDATE "User" SET "role" = 'SUPER_ADMIN' WHERE "email" = 'you@example.com';
+UPDATE "User" SET "role" = 'SUPER_ADMIN' WHERE "email" = 'new-owner@example.com';
+UPDATE "User" SET "role" = 'ADMIN'      WHERE "email" = 'old-owner@example.com';
 ```
 
-3. 重新登录一次（旧 token 缺少 iat 字段时会被改密吊销逻辑拒绝，属预期行为）。
+4. 重新登录一次（旧 token 缺少 iat 字段时会被改密吊销逻辑拒绝，属预期行为）。
 
 > PostgreSQL 需 12+：迁移使用 `ALTER TYPE ... ADD VALUE`，低版本不允许在事务块内执行。
 
