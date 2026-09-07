@@ -258,15 +258,17 @@ docker compose down -v
 Docker images are built automatically by GitHub Actions and pushed to the GitHub Container Registry:
 
 - **Image**: `ghcr.io/kenanlabs/nav:latest`
-- **Trigger**: Git tag push (format: `v*.*.*`)
-- **Result**: pushes both `version` and `latest` tags
+- **Trigger**: Git tag push (format: `v*`) or a manual run from the Actions page
+- **Pre-release checks**: typecheck, i18n consistency, tests; the tag must match the `package.json` version
+- **Result**: multi-arch image (amd64 + arm64, each built on a native runner), pushing `version` / `major.minor` / `latest` tags
 
 **Publishing a new release**:
 
 ```bash
-# Create and push a git tag (triggers GitHub Actions)
-git tag v1.0.0
-git push origin v1.0.0
+# npm version bumps package.json and creates the tag together;
+# CI rejects builds where the two do not match
+npm version patch   # or minor / major
+git push --follow-tags
 ```
 
 ### Option 2: PM2 + Nginx

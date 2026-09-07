@@ -259,15 +259,16 @@ docker compose down -v
 本项目使用 GitHub Actions 自动构建 Docker 镜像，推送到 GitHub Container Registry：
 
 - **镜像地址**: `ghcr.io/kenanlabs/nav:latest`
-- **触发条件**: Git tag 推送（格式：`v*.*.*`）
-- **构建结果**: 同时推送 `version` 和 `latest` 标签
+- **触发条件**: Git tag 推送（格式：`v*`）或 Actions 页面手动触发
+- **发布前校验**: 类型检查、i18n 一致性、测试，且 tag 必须与 `package.json` 版本一致
+- **构建结果**: 多架构镜像（amd64 + arm64，各自原生 runner 构建），推送 `version` / `major.minor` / `latest` 标签
 
 **发布新版本**：
 
 ```bash
-# 创建并推送 git tag（触发 GitHub Actions）
-git tag v1.0.0
-git push origin v1.0.0
+# npm version 会同时更新 package.json 版本号并创建 tag，二者不一致时 CI 会拒绝构建
+npm version patch   # 或 minor / major
+git push --follow-tags
 ```
 
 ### 方式二：使用 PM2 + Nginx
