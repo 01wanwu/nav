@@ -24,6 +24,12 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+# 本地开发服务器日志
+dev-server.log
+*.log
+!npm-debug.log*
+!yarn-debug.log*
+!yarn-error.log*
 
 # local env files
 .env*.local
