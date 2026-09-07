@@ -148,13 +148,17 @@ export async function middleware(request: NextRequest) {
     request.cookies.has(name)
   )
 
-  // 如果已登录且访问登录页，重定向到 dashboard
-  if (isAdmin && isAuthRoute) {
-    const response = NextResponse.redirect(
-      new URL("/admin/dashboard", request.url)
-    )
-    if (hasLegacyCookies) {
-      for (const name of LEGACY_COOKIE_NAMES) response.cookies.delete(name)
+  // 已登录访问登录页不再强制重定向：middleware 只能验签名、无法查库（Edge），
+  // 「签名有效但用户已不存在/角色已变更」的残留会话若在此被踢回后台，
+  // 将永远进不了登录页重新认证（401 死循环）。放行登录页无害——
+  // 已登录用户看到登录页重新登录一次即可；后台页面的查库拦截由
+  // (dash)/layout 的服务端鉴权门完成
+  if (isAdmin && isAuthRoute && hasLegacyCookies) {
+    const response = NextResponse.next({
+      request: { headers: buildWorkspaceHeaders(request) },
+    })
+    for (const name of LEGACY_COOKIE_NAMES) {
+      if (request.cookies.has(name)) response.cookies.delete(name)
     }
     return response
   }
