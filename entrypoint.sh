@@ -45,13 +45,16 @@ if [ "$DB_MODE" = "postgres" ] && [ "$PG_URL_VALID" != "1" ]; then
   exit 1
 fi
 
-# seed 前置检查：无管理员账户时执行种子初始化（sqlite / postgres 共用）
+# seed 前置检查：无任何管理员账户时才执行种子初始化（sqlite / postgres 共用）
 seed_if_needed() {
   echo "🔍 检查数据库是否已初始化..."
+  # 必须同时覆盖 SUPER_ADMIN 与 ADMIN：引入两级角色后，存量账号被提升为超管
+  # 是大概率操作，若这里只查 ADMIN，会误判为「未初始化」而重跑 seed（往已有
+  # 数据的库里注入示例分类与站点）
   if node -e "
     const { PrismaClient } = require('./generated/prisma-${1}');
     const prisma = new PrismaClient();
-    prisma.user.findFirst({ where: { role: 'ADMIN' } })
+    prisma.user.findFirst({ where: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } } })
       .then(user => {
         if (user) {
           console.log('✅ 数据库已初始化，跳过 seed');
