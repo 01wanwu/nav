@@ -420,7 +420,8 @@ export function AdminUsersManager() {
                 value={editForm.role}
                 onValueChange={(v) => setEditForm({ ...editForm, role: v })}
               >
-                <SelectTrigger>
+                {/* 自己不能改自己的角色：服务端会拒绝，此处提前禁用以避免提交后才报错 */}
+                <SelectTrigger disabled={editTarget?.id === actorId}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -428,6 +429,9 @@ export function AdminUsersManager() {
                   <SelectItem value="SUPER_ADMIN">{t("roleSuperAdmin")}</SelectItem>
                 </SelectContent>
               </Select>
+              {editTarget?.id === actorId && (
+                <p className="text-xs text-muted-foreground">{t("cannotChangeOwnRole")}</p>
+              )}
             </div>
           </div>
           <DialogFooter>

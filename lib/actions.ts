@@ -1815,67 +1815,19 @@ export async function getSiteIdsForHealthCheck() {
 //   ADMIN：仅内容维护，不可触及其他账号
 // 自我保护规则：
 //   - 仅超管可执行用户管理操作（requireSuperAdmin）
-//   - 超管不可被删除/降级（只能由其本人改密或主动退出）
-//   - 操作者不能删除/降级自己（防误操作导致锁死）
+//   - 超管不可被删除/降级，也不可被其他超管重置密码
+//     （重置密码等同接管账号，与删除/降级同属一个信任边界）
+//   - 操作者不能删除/降级自己（防误操作把最后一个超管锁在门外）
 
-export async function getUsersWithPagination(params: {
-  page?: number
-  pageSize?: number
-  search?: string
-}) {
-  const unauthorized = await requireAdmin()
-  if (unauthorized) return unauthorized
-  try {
-    const { page, pageSize } = clampPagination(params.page, params.pageSize)
-    const skip = (page - 1) * pageSize
+// 注：管理员列表不再有「任意管理员可读」的版本。曾经的
+// getUsersWithPagination 以 requireAdmin 即可枚举全部管理员邮箱与角色，
+// 与新权限模型（ADMIN 不可触及其他账号）冲突且已无调用方，故移除；
+// 需要列表一律走仅超管可用的 getManagedUsers。
 
-    const where: Prisma.UserWhereInput = {}
-
-    if (params.search) {
-      where.OR = [
-        { email: ciContains(params.search) },
-        { name: ciContains(params.search) },
-      ]
-    }
-
-    const [users, total] = await Promise.all([
-      prisma.user.findMany({
-        where,
-        skip,
-        take: pageSize,
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          role: true,
-          createdAt: true,
-        },
-      }),
-      prisma.user.count({ where }),
-    ])
-
-    return {
-      success: true,
-      data: users,
-      pagination: {
-        page,
-        pageSize,
-        total,
-        totalPages: Math.ceil(total / pageSize),
-      },
-    }
-  } catch (error) {
-    if (isNextDynamicError(error)) throw error
-    console.error("Error fetching users with pagination:", error)
-    return { success: false, error: "Failed to fetch users" }
-  }
-}
-
-
-// 修改资料（邮箱/姓名/头像）。密码修改不走此通道，
-// 一律经由 changePassword 强制校验旧密码，且身份以会话为准，
-// 不再信任客户端传入的 userId
+// 修改本人资料（邮箱/姓名/头像）。密码修改不走此通道，
+// 一律经由 changePassword 强制校验旧密码。
+// 目标账号只认会话身份：Server Action 是公开可构造调用的 RPC，
+// 若信任客户端传入的 id，普通管理员即可改写他人（含超管）的邮箱
 export async function updateUser(
   id: string,
   data: {
@@ -1884,8 +1836,11 @@ export async function updateUser(
     avatar?: string
   }
 ) {
-  const unauthorized = await requireAdmin()
-  if (unauthorized) return unauthorized
+  const session = await getAdminSession()
+  if (!session) return { success: false, error: "Unauthorized" }
+  if (id !== session.userId) {
+    return { success: false, error: "FORBIDDEN_NOT_SELF" }
+  }
   try {
     type UserUpdateData = {
       email?: string
@@ -1903,7 +1858,7 @@ export async function updateUser(
       where: { id },
       data: updateData,
     })
-    revalidatePath("/admin/users")
+    revalidatePath("/admin/settings")
     // 只回传安全字段，避免 password 哈希随响应外泄（内存模式下
     // update 不支持 select，故在应用层投影）
     return {
@@ -1925,20 +1880,24 @@ export async function updateUser(
 // ---------- 用户管理（仅超管） ----------
 
 // 用户管理操作统一闸门：仅 SUPER_ADMIN 可执行。
-// 返回 null 表示通过（gateSession 已保存操作者会话）；否则返回统一错误结果。
-let gateSession: NonNullable<Awaited<ReturnType<typeof getAdminSession>>> | null = null
-async function requireSuperAdmin(): Promise<{ success: false; error: string } | null> {
+// 通过时一并返回操作者会话供审计日志署名——不用模块级变量透传，
+// 避免并发请求间相互覆盖（Server Action 天然并发，共享可变状态在此处不安全）
+type SuperAdminGate =
+  | {
+      ok: true
+      session: NonNullable<Awaited<ReturnType<typeof getAdminSession>>>
+    }
+  | { ok: false; error: string }
+
+async function requireSuperAdmin(): Promise<SuperAdminGate> {
   const session = await getAdminSession()
   if (!session) {
-    gateSession = null
-    return { success: false, error: "Unauthorized" }
+    return { ok: false, error: "Unauthorized" }
   }
   if (!isSuperAdminRole(session.role)) {
-    gateSession = null
-    return { success: false, error: "FORBIDDEN_NOT_SUPER_ADMIN" }
+    return { ok: false, error: "FORBIDDEN_NOT_SUPER_ADMIN" }
   }
-  gateSession = session
-  return null
+  return { ok: true, session }
 }
 
 // 自我保护核心规则：目标账号是否可被操作者删除/降级。
@@ -1969,8 +1928,8 @@ export async function getManagedUsers(params: {
   search?: string
 }) {
   const gate = await requireSuperAdmin()
-  if (gate) return gate
-  const gateActor = gateSession!
+  if (!gate.ok) return { success: false as const, error: gate.error }
+  const actor = gate.session
   try {
     const { page, pageSize } = clampPagination(params.page, params.pageSize, 20)
     const skip = (page - 1) * pageSize
@@ -2002,7 +1961,7 @@ export async function getManagedUsers(params: {
 
     return {
       success: true as const,
-      actorId: gateActor.userId,
+      actorId: actor.userId,
       data: users,
       pagination: {
         page,
@@ -2026,8 +1985,8 @@ export async function createManagedUser(data: {
   role?: string
 }) {
   const gate = await requireSuperAdmin()
-  if (gate) return gate
-  const gateActor = gateSession!
+  if (!gate.ok) return { success: false as const, error: gate.error }
+  const actor = gate.session
   try {
     const email = typeof data.email === "string" ? data.email.trim().toLowerCase() : ""
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -2057,8 +2016,8 @@ export async function createManagedUser(data: {
     })
 
     await recordAuditLog({
-      actorId: gateActor.userId,
-      actorEmail: gateActor.email || "",
+      actorId: actor.userId,
+      actorEmail: actor.email || "",
       action: "CREATE",
       entityType: "user",
       entityId: user.id,
@@ -2084,8 +2043,8 @@ export async function updateManagedUser(
   }
 ) {
   const gate = await requireSuperAdmin()
-  if (gate) return gate
-  const gateActor = gateSession!
+  if (!gate.ok) return { success: false as const, error: gate.error }
+  const actor = gate.session
   try {
     const target = await prisma.user.findUnique({
       where: { id },
@@ -2117,7 +2076,7 @@ export async function updateManagedUser(
       const role: "SUPER_ADMIN" | "ADMIN" =
         data.role === "SUPER_ADMIN" ? "SUPER_ADMIN" : "ADMIN"
       // 角色变更同样受自我保护规则约束：不能降级自己/其他超管
-      const guard = await checkTargetMutatable(gateActor, id)
+      const guard = await checkTargetMutatable(actor, id)
       if (guard) return { success: false as const, error: guard }
       updateData.role = role
       roleChanged = true
@@ -2130,8 +2089,8 @@ export async function updateManagedUser(
     })
 
     await recordAuditLog({
-      actorId: gateActor.userId,
-      actorEmail: gateActor.email || "",
+      actorId: actor.userId,
+      actorEmail: actor.email || "",
       action: "UPDATE",
       entityType: "user",
       entityId: id,
@@ -2152,17 +2111,22 @@ export async function updateManagedUser(
 // 写 passwordChangedAt 吊销该账号所有旧会话（被盗账号立即踢下线）
 export async function resetManagedUserPassword(id: string, newPassword: string) {
   const gate = await requireSuperAdmin()
-  if (gate) return gate
-  const gateActor = gateSession!
+  if (!gate.ok) return { success: false as const, error: gate.error }
+  const actor = gate.session
   try {
     if (typeof newPassword !== "string" || newPassword.length < 6) {
       return { success: false as const, error: "PASSWORD_TOO_SHORT" }
     }
     const target = await prisma.user.findUnique({
       where: { id },
-      select: { id: true, email: true },
+      select: { id: true, email: true, role: true },
     })
     if (!target) return { success: false as const, error: "USER_NOT_FOUND" }
+    // 重置密码即等于接管该账号，与「超管不可删除/降级」属于同一信任边界：
+    // 不能重置其他超管的密码（重置自己等价于改密，允许）
+    if (isSuperAdminRole(target.role) && target.id !== actor.userId) {
+      return { success: false as const, error: "CANNOT_MODIFY_SUPER_ADMIN" }
+    }
 
     await prisma.user.update({
       where: { id },
@@ -2173,8 +2137,8 @@ export async function resetManagedUserPassword(id: string, newPassword: string) 
     })
 
     await recordAuditLog({
-      actorId: gateActor.userId,
-      actorEmail: gateActor.email || "",
+      actorId: actor.userId,
+      actorEmail: actor.email || "",
       action: "UPDATE",
       entityType: "user",
       entityId: id,
@@ -2193,10 +2157,10 @@ export async function resetManagedUserPassword(id: string, newPassword: string) 
 // 删除后其旧会话因查库失败自动失效
 export async function deleteManagedUser(id: string) {
   const gate = await requireSuperAdmin()
-  if (gate) return gate
-  const gateActor = gateSession!
+  if (!gate.ok) return { success: false as const, error: gate.error }
+  const actor = gate.session
   try {
-    const guard = await checkTargetMutatable(gateActor, id)
+    const guard = await checkTargetMutatable(actor, id)
     if (guard) return { success: false as const, error: guard }
 
     const target = await prisma.user.findUnique({
@@ -2208,8 +2172,8 @@ export async function deleteManagedUser(id: string) {
     await prisma.user.delete({ where: { id } })
 
     await recordAuditLog({
-      actorId: gateActor.userId,
-      actorEmail: gateActor.email || "",
+      actorId: actor.userId,
+      actorEmail: actor.email || "",
       action: "DELETE",
       entityType: "user",
       entityId: id,
@@ -2231,8 +2195,7 @@ export async function getAuditLogs(params: {
   action?: string
 }) {
   const gate = await requireSuperAdmin()
-  if (gate) return gate
-  const gateActor = gateSession!
+  if (!gate.ok) return { success: false as const, error: gate.error }
   try {
     const { page, pageSize } = clampPagination(params.page, params.pageSize, 20)
     const skip = (page - 1) * pageSize
@@ -2314,7 +2277,7 @@ export async function changePassword(
       entityId: user.id,
       detail: `${user.email} 修改了自己的密码`,
     })
-    revalidatePath("/admin/users")
+    revalidatePath("/admin/settings")
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error

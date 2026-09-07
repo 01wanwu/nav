@@ -31,13 +31,15 @@ A clean and modern link navigation system built with Next.js 15, Prisma, and sha
   - JSON format: complete data backup (description, ordering, publish status, and all fields)
   - Full backup: includes workspace structures and domain bindings for site migration
   - Chrome bookmarks: browser-compatible format (name, URL, and icon only)
-- 👤 Admin System - single-admin design, edit profile from the sidebar avatar
+- 👥 **Multi-admin & role tiers** - super admin / admin: super admins manage accounts and read the audit log, admins handle content; see [Admin Roles & Permissions](docs/admin-permissions.md)
 - ⚙️ System Settings - site name, logo, favicon, GitHub link, ICP filing, etc.
 - 📈 Visit Tracking - optional site visit statistics
 - 🧩 **Plugin System** - builtin collection/browser-extension plugins plus user-uploaded declarative plugins; see the [Plugin Development Guide](docs/plugin-development.md)
+- 📜 **Audit log** - records sign-ins and site/admin changes, super admin only (filterable by action type)
 
 ### Technical Highlights
-- **Single-admin architecture** - no complex user permission system needed
+- **Two-tier admin roles** - super admin / admin; the database is the source of truth, so demotion and password changes take effect immediately; all checks live in `lib/roles.ts`
+- **Traceable operations** - key admin actions are written to an audit log with a redundant actor snapshot that survives account deletion
 - **Dynamic configuration** - modify site settings in real time from the dashboard
 - **Pagination** - all list pages support pagination
 - **Type safety** - full TypeScript typings, zero `any`
@@ -307,7 +309,7 @@ pm2 save
 | `NEXTAUTH_SECRET` | Encryption key (also used as session signing fallback) | random string (`openssl rand -base64 32`) | ❌ (one of the two; Docker generates a fallback) |
 | `NEXTAUTH_URL` | Full app URL | `http://localhost:3000` or `https://your-domain.com` | ❌ (Docker default) |
 | `POSTGRES_PASSWORD` | PostgreSQL password for the `postgres` compose profile | random long string | ✅ (postgres profile only) |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Initial admin account (first seed only) | email / strong password | ❌ |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Initial admin account, created as **super admin** (first seed only; an existing account with the same email is not overwritten) | email / strong password | ❌ |
 
 **Docker**: configure `SESSION_SECRET` (or `NEXTAUTH_SECRET`); SQLite is used by default with no database config. Add `DB_PROVIDER=postgres` + `POSTGRES_PASSWORD` to switch to the PostgreSQL profile.
 
@@ -356,6 +358,19 @@ git pull && npm install && npm start
 # SQLite (default): schema is synced on startup-equivalent via `npm run db:push` if needed
 # PostgreSQL: run `npm run db:migrate:deploy` before starting
 ```
+
+### Upgrading to the multi-admin version (SUPER_ADMIN / ADMIN)
+
+The upgrade adds the `SUPER_ADMIN` role and the `AuditLog` table. **Existing accounts keep the
+`ADMIN` role**, so right after upgrading there is no super admin and the "Users" / "Audit Log"
+entries stay hidden. Promote one trusted account manually:
+
+```sql
+UPDATE "User" SET "role" = 'SUPER_ADMIN' WHERE "email" = 'you@example.com';
+```
+
+Then sign in again. Fresh installs are unaffected — the seeded account is always a super admin.
+Full details: [Admin Roles & Permissions](docs/admin-permissions.md#upgrading-from-the-single-admin-version).
 
 ---
 
@@ -414,9 +429,25 @@ npm run db:push
 - ✅ **Prefer the admin dashboard** for all data operations
 - ✅ Avoid direct database access (except bulk import via the built-in data tools)
 
-### Why is there no user management in the system settings page?
+### Why can't I see "Users" / "Audit Log" in the dashboard?
 
-Conan Nav uses a **single-admin architecture**. Admin profile editing is integrated into the sidebar avatar component, which is simpler and more intuitive.
+Both entries are **super admin only**. Typical reasons:
+
+1. Your account is a regular admin (`ADMIN`) — it can maintain content but not manage accounts.
+2. You just upgraded from an older version — existing accounts are not promoted automatically;
+   run one SQL statement as described in
+   [Upgrading to the multi-admin version](#upgrading-to-the-multi-admin-version-super_admin--admin).
+3. Your role was changed after you signed in — sign out and back in (the database is the source of
+   truth, so the old session stops working immediately).
+
+Your own profile and password are always editable via **sidebar avatar → edit profile**.
+See [Admin Roles & Permissions](docs/admin-permissions.md) for the role model and self-protection rules.
+
+### I forgot the super admin password
+
+A super admin cannot be deleted and its password cannot be reset by another super admin, so recovery
+means updating the hash directly (re-seeding does not overwrite existing accounts).
+Steps: [Admin Roles & Permissions](docs/admin-permissions.md#lost-super-admin-password).
 
 ### How do I back up the database?
 
