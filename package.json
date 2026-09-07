@@ -1,6 +1,6 @@
 {
   "name": "conan-nav",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "private": true,
   "scripts": {
     "dev": "node --max-http-header-size=65536 node_modules/next/dist/bin/next dev -p 3000 -H 0.0.0.0",
