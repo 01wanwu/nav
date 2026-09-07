@@ -107,6 +107,11 @@ Known limits:
 The initial account created by `prisma/seed.ts` (`ADMIN_EMAIL` / `ADMIN_PASSWORD`) is always a
 `SUPER_ADMIN` — those environment variables are controlled by the operator and are the trust anchor.
 
+**The variables also apply to running instances**: if `ADMIN_EMAIL` / `ADMIN_PASSWORD` are set (or
+changed) after the first initialization, startup reconciles the account
+(`scripts/ensure-env-admin.mjs`) — when the email does not exist in the database yet, it is created
+as a super admin from `ADMIN_PASSWORD`; an existing account with that email keeps its password.
+
 ### Upgrading from the single-admin version
 
 1. Run the migration:

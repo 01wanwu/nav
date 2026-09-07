@@ -311,7 +311,7 @@ pm2 save
 | `NEXTAUTH_SECRET` | Encryption key (also used as session signing fallback) | random string (`openssl rand -base64 32`) | ❌ (one of the two; Docker generates a fallback) |
 | `NEXTAUTH_URL` | Full app URL | `http://localhost:3000` or `https://your-domain.com` | ❌ (Docker default) |
 | `POSTGRES_PASSWORD` | PostgreSQL password for the `postgres` compose profile | random long string | ✅ (postgres profile only) |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Initial admin account, created as **super admin** (first seed only; an existing account with the same email is not overwritten) | email / strong password | ❌ |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Initial super admin account: created by the first-run seed; **also honored on existing instances** — at startup, if the email does not exist yet, the account is created as super admin from `ADMIN_PASSWORD` (an existing account with that email keeps its in-database password) | email / strong password | ❌ |
 | `LOGIN_RATE_LIMIT_DISABLED` | Disable login rate limiting entirely (trusted/internal networks) | `true` | ❌ |
 | `LOGIN_RATE_LIMIT_ACCOUNT_MAX` / `_IP_MAX` | Login failure thresholds: per account / per IP (defaults 10 / 30 within a 15-minute window) | number | ❌ |
 | `LOGIN_RATE_LIMIT_LOCK_SECONDS` | Lock duration once triggered (default 300 seconds, fixed — no escalating backoff) | number | ❌ |

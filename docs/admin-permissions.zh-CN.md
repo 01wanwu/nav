@@ -92,6 +92,10 @@
 `prisma/seed.ts` 创建的初始账号（`ADMIN_EMAIL` / `ADMIN_PASSWORD`）固定为 SUPER_ADMIN——
 环境变量由部署方掌控，是系统的信任锚点。
 
+**环境变量对已运行实例同样生效**：`ADMIN_EMAIL` / `ADMIN_PASSWORD` 是部署后才设置（或更换）的，
+启动时会做账号对齐（`scripts/ensure-env-admin.mjs`）——该邮箱在库中不存在时按 `ADMIN_PASSWORD`
+自动创建为超管；该邮箱已存在则不覆盖库内密码。
+
 ### 从单管理员版本升级
 
 1. 执行迁移：
