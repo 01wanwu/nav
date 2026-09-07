@@ -35,7 +35,7 @@ A clean and modern link navigation system built with Next.js 15, Prisma, and sha
 - ⚙️ System Settings - site name, logo, favicon, GitHub link, ICP filing, etc.
 - 📈 Visit Tracking - optional site visit statistics
 - 🧩 **Plugin System** - builtin collection/browser-extension plugins plus user-uploaded declarative plugins; see the [Plugin Development Guide](docs/plugin-development.md)
-- 📜 **Audit log** - records sign-ins and site/admin changes, super admin only (filterable by action type)
+- 📜 **Audit log** - records sign-ins and site/category/workspace/domain/plugin/settings/admin changes, kept for 90 days, super admin only (searchable and filterable)
 
 ### Technical Highlights
 - **Two-tier admin roles** - super admin / admin; the database is the source of truth, so demotion and password changes take effect immediately; all checks live in `lib/roles.ts`
