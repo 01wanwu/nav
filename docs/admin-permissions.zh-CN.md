@@ -55,20 +55,35 @@
 | 事件 | action | entityType |
 |---|---|---|
 | 登录成功 | LOGIN | user |
-| 创建站点 | CREATE | site |
-| 删除站点 | DELETE | site |
+| 站点创建 / 编辑 / 删除 | CREATE / UPDATE / DELETE | site |
+| 站点置顶、发布状态翻转、排序调整 | UPDATE | site |
+| 分类创建 / 编辑 / 删除 / 排序 | CREATE / UPDATE / DELETE | category |
+| 工作区创建 / 编辑 / 删除 / 设为默认 | CREATE / UPDATE / DELETE | workspace |
+| 域名绑定 / 解绑 | CREATE / DELETE | domain |
+| 系统设置更新 | UPDATE | settings |
+| 插件启停 / 配置修改 | UPDATE | plugin |
+| 插件上传 / 删除 | CREATE / DELETE | plugin |
+| 数据导入（JSON / 全量备份 / 浏览器书签） | CREATE | site |
 | 新增管理员 | CREATE | user |
 | 编辑管理员 / 调整角色 | UPDATE | user |
 | 重置他人密码 | UPDATE | user |
 | 本人改密 | UPDATE | user |
 | 删除管理员 | DELETE | user |
 
-已知边界（有意不做）：
+日志查看页（`/admin/audit`，仅超管）支持：
 
-- 分类、工作区、插件、系统设置的变更暂不记录；如需全覆盖，在对应 action 里调用 `recordAuditLog` 即可。
+- 按**操作类型**（创建 / 更新 / 删除 / 登录）与**对象类型**（账号 / 站点 / 分类 / 工作区 / 域名 / 插件 / 系统设置）筛选；
+- 关键字搜索，命中操作者邮箱、详情文本或对象 ID。
+
+保留策略：
+
+- 审计日志**保留 90 天**（`AUDIT_LOG_RETENTION_DAYS`），过期条目在写入与查询时惰性清理
+  （每个进程每小时最多执行一次 `deleteMany`，多实例部署下幂等无害）。
+- 审计的定位是「近期操作可追溯」而非永久存档，需要长期留存的实例请自行定期导出归档。
+
+已知边界：
+
 - `detail` 为中文自然语言（如「创建管理员 a@b.com（角色 ADMIN）」），不随界面语言切换。
-- 无自动清理策略。日志量大的实例请自行归档，例如删除 90 天前的数据：
-  `DELETE FROM "AuditLog" WHERE created_at < now() - interval '90 days';`
 
 ## 5. 新装与升级
 

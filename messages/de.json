@@ -175,9 +175,20 @@
       "thActor": "Akteur",
       "thAction": "Aktion",
       "thDetail": "Details",
+      "thEntity": "Objekt",
       "empty": "Noch keine Einträge",
       "prevPage": "Zurück",
-      "nextPage": "Weiter"
+      "nextPage": "Weiter",
+      "searchPlaceholder": "Akteur, Details oder Objekt-ID suchen",
+      "search": "Suchen",
+      "filterAllTypes": "Alle Objekte",
+      "entityUser": "Konto",
+      "entitySite": "Seite",
+      "entityCategory": "Kategorie",
+      "entityWorkspace": "Arbeitsbereich",
+      "entityDomain": "Domain",
+      "entityPlugin": "Plugin",
+      "entitySettings": "Systemeinstellungen"
     },
     "login": {
       "subtitle": "Melden Sie sich an, um Ihre Navigation zu verwalten",

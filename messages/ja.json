@@ -175,9 +175,20 @@
       "thActor": "操作者",
       "thAction": "操作",
       "thDetail": "詳細",
+      "thEntity": "対象",
       "empty": "ログはまだありません",
       "prevPage": "前へ",
-      "nextPage": "次へ"
+      "nextPage": "次へ",
+      "searchPlaceholder": "操作者・詳細・対象 ID を検索",
+      "search": "検索",
+      "filterAllTypes": "すべての対象",
+      "entityUser": "アカウント",
+      "entitySite": "サイト",
+      "entityCategory": "カテゴリー",
+      "entityWorkspace": "ワークスペース",
+      "entityDomain": "ドメイン",
+      "entityPlugin": "プラグイン",
+      "entitySettings": "システム設定"
     },
     "login": {
       "subtitle": "サインインしてナビゲーションサイトを管理",

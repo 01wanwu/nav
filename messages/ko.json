@@ -175,9 +175,20 @@
       "thActor": "작업자",
       "thAction": "작업",
       "thDetail": "상세",
+      "thEntity": "대상",
       "empty": "로그가 없습니다",
       "prevPage": "이전",
-      "nextPage": "다음"
+      "nextPage": "다음",
+      "searchPlaceholder": "작업자, 상세 또는 대상 ID 검색",
+      "search": "검색",
+      "filterAllTypes": "전체 대상",
+      "entityUser": "계정",
+      "entitySite": "사이트",
+      "entityCategory": "카테고리",
+      "entityWorkspace": "워크스페이스",
+      "entityDomain": "도메인",
+      "entityPlugin": "플러그인",
+      "entitySettings": "시스템 설정"
     },
     "login": {
       "subtitle": "로그인하여 내비게이션 사이트를 관리하세요",

@@ -175,9 +175,20 @@
       "thActor": "Auteur",
       "thAction": "Action",
       "thDetail": "Détail",
+      "thEntity": "Objet",
       "empty": "Aucun journal",
       "prevPage": "Précédent",
-      "nextPage": "Suivant"
+      "nextPage": "Suivant",
+      "searchPlaceholder": "Rechercher par auteur, détail ou ID d'objet",
+      "search": "Rechercher",
+      "filterAllTypes": "Tous les objets",
+      "entityUser": "Compte",
+      "entitySite": "Site",
+      "entityCategory": "Catégorie",
+      "entityWorkspace": "Espace de travail",
+      "entityDomain": "Domaine",
+      "entityPlugin": "Plugin",
+      "entitySettings": "Paramètres système"
     },
     "login": {
       "subtitle": "Connectez-vous pour gérer votre navigation",

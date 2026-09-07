@@ -175,9 +175,20 @@
       "thActor": "Actor",
       "thAction": "Action",
       "thDetail": "Detail",
+      "thEntity": "Object",
       "empty": "No logs yet",
       "prevPage": "Previous",
-      "nextPage": "Next"
+      "nextPage": "Next",
+      "searchPlaceholder": "Search actor, detail or object ID",
+      "search": "Search",
+      "filterAllTypes": "All objects",
+      "entityUser": "Account",
+      "entitySite": "Site",
+      "entityCategory": "Category",
+      "entityWorkspace": "Workspace",
+      "entityDomain": "Domain",
+      "entityPlugin": "Plugin",
+      "entitySettings": "System settings"
     },
     "login": {
       "subtitle": "Sign in to manage your navigation site",

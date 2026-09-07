@@ -19,7 +19,7 @@ function clampPagination(page?: number, pageSize?: number, defaultPageSize = 10)
 }
 import { getAdminSession } from "./api-auth"
 import { isSuperAdminRole } from "./roles"
-import { recordAuditLog } from "./audit-log"
+import { recordAuditLog, maybePruneAuditLogs, type AuditActionType } from "./audit-log"
 import { verifyDomainHost } from "./domain-verify"
 import { isPluginEnabled, firePluginWebhook } from "./plugins/runtime"
 import {
@@ -44,6 +44,27 @@ async function requireAdmin(): Promise<{ success: false; error: string } | null>
     return { success: false, error: "Unauthorized" }
   }
   return null
+}
+
+// 内容类管理操作的审计旁路：操作者身份取当前会话（requireAdmin 已保证存在，
+// 防御式跳过），记录失败不阻塞业务。login 与用户管理两个调用点各自内联，
+// 因为它们的 actor 上下文不同（登录无会话 / 超管闸门已持有会话）。
+async function writeAuditLog(
+  action: Exclude<AuditActionType, "LOGIN">,
+  entityType: string,
+  entityId: string | undefined,
+  detail: string
+): Promise<void> {
+  const actor = await getAdminSession()
+  if (!actor) return
+  await recordAuditLog({
+    actorId: actor.userId,
+    actorEmail: actor.email || "",
+    action,
+    entityType,
+    entityId,
+    detail,
+  })
 }
 
 // 站点 URL 协议白名单：仅允许 http/https，
@@ -252,6 +273,12 @@ export async function createWorkspace(data: {
     })
     revalidatePath("/", "layout")
     revalidatePath("/admin/workspaces")
+    await writeAuditLog(
+      "CREATE",
+      "workspace",
+      workspace.id,
+      `创建工作区「${workspace.name}」(${workspace.slug})`
+    )
     return { success: true, data: workspace }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -306,6 +333,12 @@ export async function updateWorkspace(id: string, data: {
     })
     revalidatePath("/", "layout")
     revalidatePath("/admin/workspaces")
+    await writeAuditLog(
+      "UPDATE",
+      "workspace",
+      workspace.id,
+      `编辑工作区「${workspace.name}」(${workspace.slug})`
+    )
     return { success: true, data: workspace }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -337,6 +370,12 @@ export async function deleteWorkspace(id: string) {
     })
     revalidatePath("/", "layout")
     revalidatePath("/admin/workspaces")
+    await writeAuditLog(
+      "DELETE",
+      "workspace",
+      id,
+      `删除工作区「${workspace.name}」(${workspace.slug})`
+    )
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -367,6 +406,12 @@ export async function setPrimaryWorkspace(id: string) {
     })
     revalidatePath("/", "layout")
     revalidatePath("/admin/workspaces")
+    await writeAuditLog(
+      "UPDATE",
+      "workspace",
+      id,
+      `将「${workspace.name}」设为默认工作区`
+    )
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -401,7 +446,7 @@ export async function addWorkspaceDomain(workspaceId: string, rawHost: string) {
     // 目标工作区必须存在：内存模式无外键约束，否则会创建指向不存在工作区的孤儿域名
     const targetWorkspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
-      select: { id: true },
+      select: { id: true, name: true },
     })
     if (!targetWorkspace) {
       return { success: false, error: "WORKSPACE_NOT_FOUND" }
@@ -412,6 +457,12 @@ export async function addWorkspaceDomain(workspaceId: string, rawHost: string) {
     })
     revalidatePath("/", "layout")
     revalidatePath("/admin/workspaces")
+    await writeAuditLog(
+      "CREATE",
+      "domain",
+      domain.id,
+      `为工作区「${targetWorkspace.name}」绑定域名 ${host}`
+    )
     return { success: true, data: domain }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -424,9 +475,11 @@ export async function removeWorkspaceDomain(domainId: string) {
   const unauthorized = await requireAdmin()
   if (unauthorized) return unauthorized
   try {
-    await prisma.domain.delete({ where: { id: domainId } })
+    // delete 返回被删行：借它拿到 host 供审计日志使用，无需额外查询
+    const domain = await prisma.domain.delete({ where: { id: domainId } })
     revalidatePath("/", "layout")
     revalidatePath("/admin/workspaces")
+    await writeAuditLog("DELETE", "domain", domainId, `解绑域名 ${domain.host}`)
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -695,6 +748,12 @@ export async function createCategory(data: {
     })
     revalidatePath("/admin/categories")
     revalidatePath("/")
+    await writeAuditLog(
+      "CREATE",
+      "category",
+      category.id,
+      `创建分类「${category.name}」(${category.slug})`
+    )
     return { success: true, data: category }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -749,6 +808,12 @@ export async function updateCategory(id: string, data: {
       revalidatePath(`/category/${existing.slug}`)
     }
     revalidatePath(`/category/${category.slug}`)
+    await writeAuditLog(
+      "UPDATE",
+      "category",
+      category.id,
+      `编辑分类「${category.name}」(${category.slug})`
+    )
     return { success: true, data: category }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -775,6 +840,14 @@ export async function updateCategoriesOrder(items: { id: string; order: number }
     })
     revalidatePath("/admin/categories")
     revalidatePath("/")
+    if (validItems.length > 0) {
+      await writeAuditLog(
+        "UPDATE",
+        "category",
+        undefined,
+        `调整分类排序（${validItems.length} 个分类）`
+      )
+    }
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -838,6 +911,14 @@ export async function updateSitesOrder(categoryId: string, orderedIds: string[])
     })
     revalidatePath("/admin/sites")
     revalidatePath("/")
+    if (finalOrder.length > 0) {
+      await writeAuditLog(
+        "UPDATE",
+        "site",
+        undefined,
+        `调整站点排序（${finalOrder.length} 个站点）`
+      )
+    }
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -861,8 +942,9 @@ export async function deleteCategory(id: string) {
       if (siteCount > 0) {
         return { blocked: true as const, siteCount }
       }
-      await tx.category.delete({ where: { id } })
-      return { blocked: false as const, siteCount: 0 }
+      // delete 返回被删行：借它拿到名称供审计日志使用
+      const deleted = await tx.category.delete({ where: { id } })
+      return { blocked: false as const, siteCount: 0, name: deleted.name }
     })
     if (result.blocked) {
       return {
@@ -873,6 +955,7 @@ export async function deleteCategory(id: string) {
     }
     revalidatePath("/admin/categories")
     revalidatePath("/")
+    await writeAuditLog("DELETE", "category", id, `删除分类「${result.name}」`)
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -1523,6 +1606,12 @@ export async function updateSite(id: string, data: {
       })
     }
 
+    await writeAuditLog(
+      "UPDATE",
+      "site",
+      site.id,
+      `编辑站点「${site.name}」(${site.url})`
+    )
     return { success: true, data: site }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -1548,6 +1637,12 @@ export async function toggleSitePin(id: string) {
     revalidatePath("/admin/sites")
     revalidatePath("/")
     revalidatePath(`/category/${updated.category?.slug || ''}`)
+    await writeAuditLog(
+      "UPDATE",
+      "site",
+      updated.id,
+      `${updated.isPinned ? "置顶" : "取消置顶"}站点「${updated.name}」`
+    )
     return { success: true, data: updated }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -1636,6 +1731,12 @@ export async function toggleSitePublish(id: string) {
       description: site.description,
     })
 
+    await writeAuditLog(
+      "UPDATE",
+      "site",
+      site.id,
+      `${site.isPublished ? "发布" : "下架"}站点「${site.name}」`
+    )
     return { success: true, data: site }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -2188,15 +2289,31 @@ export async function deleteManagedUser(id: string) {
   }
 }
 
-// 审计日志分页查询（仅超管）
+// 审计日志分页查询（仅超管）。支持按操作类型 / 对象类型筛选与关键字搜索
+// （命中操作者邮箱、详情文本或对象 ID）。查询前顺带执行保留期清理（内部节流）。
+const AUDIT_LOG_ENTITY_TYPES = [
+  "user",
+  "site",
+  "category",
+  "workspace",
+  "domain",
+  "plugin",
+  "settings",
+] as const
+
 export async function getAuditLogs(params: {
   page?: number
   pageSize?: number
   action?: string
+  entityType?: string
+  search?: string
 }) {
   const gate = await requireSuperAdmin()
   if (!gate.ok) return { success: false as const, error: gate.error }
   try {
+    // 90 天保留期：惰性清理（函数内部每小时最多执行一次）
+    await maybePruneAuditLogs()
+
     const { page, pageSize } = clampPagination(params.page, params.pageSize, 20)
     const skip = (page - 1) * pageSize
 
@@ -2206,6 +2323,22 @@ export async function getAuditLogs(params: {
       ["CREATE", "UPDATE", "DELETE", "LOGIN"].includes(params.action)
     ) {
       where.action = params.action as Prisma.EnumAuditActionFilter["equals"]
+    }
+    if (
+      params.entityType &&
+      (AUDIT_LOG_ENTITY_TYPES as readonly string[]).includes(params.entityType)
+    ) {
+      where.entityType = params.entityType
+    }
+    if (params.search) {
+      const keyword = params.search.trim()
+      if (keyword) {
+        where.OR = [
+          { actorEmail: ciContains(keyword) },
+          { detail: ciContains(keyword) },
+          { entityId: ciContains(keyword) },
+        ]
+      }
     }
 
     const [logs, total] = await Promise.all([
@@ -2553,10 +2686,11 @@ export async function updateSystemSettings(data: {
       })
     }
 
-    revalidatePath("/admin/users")
+    revalidatePath("/admin/settings")
     revalidatePath("/")
     revalidatePath("/about")
     revalidatePath("/admin/dashboard")
+    await writeAuditLog("UPDATE", "settings", settings.id, "更新系统设置")
 
     return { success: true, data: settings }
   } catch (error) {
@@ -2992,6 +3126,13 @@ export async function importData(
     revalidatePath('/category/[slug]', 'page')
 
     const skippedNote = skippedSites > 0 ? `，已跳过 ${skippedSites} 条非法或重复URL记录` : ''
+    await writeAuditLog(
+      "CREATE",
+      "site",
+      undefined,
+      `${mode === 'overwrite' ? '覆盖导入' : '追加导入'} ${importCategories.length} 个分类的数据` +
+        (skippedSites > 0 ? `，跳过 ${skippedSites} 条` : '')
+    )
     return {
       success: true,
       message: (mode === 'overwrite'
@@ -3156,6 +3297,13 @@ async function importFullBackup(
 
   const domainNote = skippedDomains > 0 ? `，跳过 ${skippedDomains} 个冲突域名` : ''
   const siteNote = skippedSites > 0 ? `，跳过 ${skippedSites} 条非法或重复站点` : ''
+  await writeAuditLog(
+    "CREATE",
+    "site",
+    undefined,
+    `导入全量备份（${mode === 'overwrite' ? '覆盖' : '追加'}模式，${importedWorkspaces} 个工作区）` +
+      (skippedDomains + skippedSites > 0 ? `，跳过 ${skippedDomains + skippedSites} 条` : '')
+  )
   return {
     success: true,
     message: `全量备份导入完成：${importedWorkspaces} 个工作区${domainNote}${siteNote}`,
@@ -3309,6 +3457,13 @@ export async function importBookmarks(
     revalidatePath('/category/[slug]', 'page')
 
     const bookmarkSkippedNote = skippedSites > 0 ? `，已跳过 ${skippedSites} 条非法URL记录` : ''
+    await writeAuditLog(
+      "CREATE",
+      "site",
+      undefined,
+      `${mode === 'overwrite' ? '覆盖导入' : '追加导入'}浏览器书签（${importedCategories} 个分类）` +
+        (skippedSites > 0 ? `，跳过 ${skippedSites} 条` : '')
+    )
     return {
       success: true,
       message: (mode === 'overwrite'

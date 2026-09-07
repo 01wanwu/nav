@@ -66,22 +66,39 @@ Events recorded today:
 | Event | action | entityType |
 |---|---|---|
 | Successful sign-in | LOGIN | user |
-| Site created | CREATE | site |
-| Site deleted | DELETE | site |
+| Site created / edited / deleted | CREATE / UPDATE / DELETE | site |
+| Site pin toggle, publish toggle, reordering | UPDATE | site |
+| Category created / edited / deleted / reordered | CREATE / UPDATE / DELETE | category |
+| Workspace created / edited / deleted / set as default | CREATE / UPDATE / DELETE | workspace |
+| Domain bound / unbound | CREATE / DELETE | domain |
+| System settings updated | UPDATE | settings |
+| Plugin enabled-disabled / config changed | UPDATE | plugin |
+| Plugin uploaded / deleted | CREATE / DELETE | plugin |
+| Data import (JSON / full backup / browser bookmarks) | CREATE | site |
 | Admin created | CREATE | user |
 | Admin edited / role changed | UPDATE | user |
 | Password reset for someone else | UPDATE | user |
 | Own password changed | UPDATE | user |
 | Admin deleted | DELETE | user |
 
-Known limits (intentional):
+The audit log page (`/admin/audit`, super admin only) supports:
 
-- Category, workspace, plugin and system-setting changes are **not** recorded yet. Call
-  `recordAuditLog` in the relevant action if you need full coverage.
+- filtering by **action type** (create / update / delete / sign-in) and by **object type**
+  (account / site / category / workspace / domain / plugin / system settings);
+- keyword search matching the actor's email, the detail text, or the object ID.
+
+Retention:
+
+- Audit entries are kept for **90 days** (`AUDIT_LOG_RETENTION_DAYS`). Expired entries are pruned
+  lazily on writes and queries (at most one `deleteMany` per process per hour; idempotent and
+  harmless under multi-instance deployments).
+- The audit trail targets "recent operations are traceable", not permanent archiving. Export and
+  archive periodically if you need long-term retention.
+
+Known limits:
+
 - `detail` is stored as Chinese natural language (e.g. "创建管理员 a@b.com（角色 ADMIN）") and is not
   localised.
-- There is no retention policy. Archive manually on busy instances, e.g. delete entries older than
-  90 days: `DELETE FROM "AuditLog" WHERE created_at < now() - interval '90 days';`
 
 ## 5. Fresh install and upgrade
 
