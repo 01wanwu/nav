@@ -5,6 +5,7 @@ import {
   SESSION_COOKIE_NAME,
   verifySessionToken,
 } from "@/lib/session"
+import { hasAdminRole } from "@/lib/roles"
 
 // 定义受保护的路由
 // 精确匹配 /admin 本身与 /admin/ 子路径：避免把 /administrator 等无关前缀路径
@@ -123,7 +124,7 @@ export async function middleware(request: NextRequest) {
     // 明文伪造 user_id/user_role cookie 无法通过此处
     const apiToken = request.cookies.get(SESSION_COOKIE_NAME)?.value
     const apiSession = apiToken ? await verifySessionToken(apiToken) : null
-    if (!apiSession || apiSession.role !== "ADMIN") {
+    if (!apiSession || !hasAdminRole(apiSession.role)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
     return NextResponse.next({
@@ -141,7 +142,7 @@ export async function middleware(request: NextRequest) {
   // 明文伪造 user_id/user_role cookie 不再能通过此处
   const token = request.cookies.get(SESSION_COOKIE_NAME)?.value
   const session = token ? await verifySessionToken(token) : null
-  const isAdmin = session !== null && session.role === "ADMIN"
+  const isAdmin = session !== null && hasAdminRole(session.role)
 
   const hasLegacyCookies = LEGACY_COOKIE_NAMES.some((name) =>
     request.cookies.has(name)

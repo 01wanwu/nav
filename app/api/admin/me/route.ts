@@ -18,6 +18,8 @@ export async function GET() {
         email: true,
         name: true,
         avatar: true,
+        // 供前端控制超管专属入口（用户管理/审计日志）展示
+        role: true,
       },
     })
 

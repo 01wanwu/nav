@@ -128,6 +128,7 @@ model User {
   password  String
   name      String?
   avatar    String?
+  // SUPER_ADMIN（超管，可管理其他管理员与查看审计日志）> ADMIN（普通管理员，仅内容维护）
   role      UserRole @default(ADMIN)
   // 改密时间：会话校验时与 token 签发时间比对，改密后吊销所有旧会话（null=从未改密）
   passwordChangedAt DateTime? @map("password_changed_at")
@@ -136,7 +137,33 @@ model User {
 }
 
 enum UserRole {
+  SUPER_ADMIN
   ADMIN
+}
+
+// 操作审计日志：多管理员协作下记录关键管理操作（谁在何时对什么做了什么）
+// actor 冗余快照（id/email）而非外键：管理员删除后日志仍可追溯
+model AuditLog {
+  id         String      @id @default(cuid())
+  actorId    String      @map("actor_id")
+  actorEmail String      @map("actor_email")
+  action     AuditAction
+  entityType String      @map("entity_type")
+  entityId   String?     @map("entity_id")
+  detail     String?
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@map("AuditLog")
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
 }
 
 model SystemSettings {
