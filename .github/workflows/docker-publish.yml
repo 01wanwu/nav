@@ -34,7 +34,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           # 与 Dockerfile 运行时镜像（node:20-alpine）保持同主版本
@@ -65,7 +65,7 @@ jobs:
         platform: [linux/amd64, linux/arm64]
     runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # GHCR 镜像名不允许大写，统一转小写（owner/Repo → owner/repo）
       - name: 计算镜像名
