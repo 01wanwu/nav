@@ -641,6 +641,8 @@
       "deleteSuccess": "Espace de travail supprimé",
       "deleteTitle": "Supprimer l'espace",
       "deleteDesc": "Supprimer l'espace « {name} » ? Seuls les espaces sans catégorie et non par défaut peuvent être supprimés.",
+      "deleteDomainTitle": "Dissocier le domaine",
+      "deleteDomainDesc": "Dissocier {host} ? Ce domaine ne servira plus cet espace de travail.",
       "actionFailed": "Échec de l'action",
       "domains": "Domaines liés",
       "noDomains": "Aucun domaine (correspondance par défaut)",

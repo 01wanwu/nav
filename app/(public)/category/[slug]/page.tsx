@@ -1,7 +1,8 @@
 import { SearchableLayout } from "@/components/layout/searchable-layout"
 import { SiteGrid } from "@/components/layout/site-grid"
 import { CategoryIconBadge } from "@/components/category-icon"
-import { getAllCategories, getCategoryBySlug, getDisplaySettings, getSites } from "@/lib/actions"
+import { getAllCategories, getCategoryBySlug, getSites } from "@/lib/actions"
+import { getCachedDisplaySettings } from "@/lib/workspace-render"
 import { notFound } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { getTranslations } from "next-intl/server"
@@ -15,10 +16,16 @@ interface CategoryPageProps {
 
 export default async function CategoryPage({ params }: CategoryPageProps) {
   const { slug } = await params
-  const { data: category } = await getCategoryBySlug(slug)
-  const { data: allCategories } = await getAllCategories()
-  const settings = await getDisplaySettings()
-  const { data: allSites } = await getSites()
+  // 四路数据互不依赖，并行取数；workspace/settings 已由请求级 cache() 合并解析
+  const [categoryResult, allCategoriesResult, settings, allSitesResult] = await Promise.all([
+    getCategoryBySlug(slug),
+    getAllCategories(),
+    getCachedDisplaySettings(),
+    getSites(),
+  ])
+  const { data: category } = categoryResult
+  const { data: allCategories } = allCategoriesResult
+  const { data: allSites } = allSitesResult
   const t = await getTranslations("category")
 
   if (!category) {

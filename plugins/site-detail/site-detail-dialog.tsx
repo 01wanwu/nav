@@ -19,7 +19,11 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { MarkdownContent } from "@/components/markdown-content";
+// react-markdown 全家桶体积可观：详情弹窗打开时才加载，不进首屏 bundle
+const MarkdownContent = dynamic(
+  () => import("@/components/markdown-content").then((m) => m.MarkdownContent),
+  { ssr: false }
+);
 import {
   useFaviconService,
   getProxiedFaviconUrl,

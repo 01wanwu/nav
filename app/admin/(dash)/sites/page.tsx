@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { useFlipList } from "@/hooks/use-flip-list"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardAction } from "@/components/ui/card"
 import {
@@ -120,8 +121,20 @@ export default function AdminSitesPage() {
     (!submissionEnabled || filterSubmitter === "all") &&
     !searchKeyword.trim()
   const [draggedSiteId, setDraggedSiteId] = useState<string | null>(null)
-  const [dragOverSiteId, setDragOverSiteId] = useState<string | null>(null)
   const [savingOrder, setSavingOrder] = useState(false)
+  // 拖拽实时重排的辅助状态（避免在 dragover/dragenter 高频事件里频繁 setState）
+  const dragMovedRef = useRef(false)
+  const lastOverIdRef = useRef<string | null>(null)
+  // 发起拖拽时的可见列表快照：实时重排会持续改写 sites，
+  // 落库时需要用「原始顺序 → 底册位置」的映射还原完整底册
+  const dragStartOrderRef = useRef<Site[]>([])
+  // 跨页拖拽：被拖行不在当前页时，悬停行仅作为落点指示（无法页内实时重排）
+  const [crossPageTargetId, setCrossPageTargetId] = useState<string | null>(null)
+  const edgeFlipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const flippingRef = useRef(false)
+  const dragTableRef = useFlipList(useRef<HTMLDivElement>(null), draggedSiteId !== null)
+
+  // 跨页拖拽的边缘自动翻页 effect 见 loadSites 定义之后（依赖 page/pagination/loadSites）
   // 分类下完整站点顺序底册（服务端同口径排序，含置顶标记），拖拽/按钮落库时以它为底册套用本页结果；
   // 带置顶标记是为了支持跨页移动时判断相邻项是否可交换（置顶/普通分区边界不可跨越）
   const fullOrderRef = useRef<Array<{ id: string; isPinned: boolean }>>([])
@@ -133,8 +146,19 @@ export default function AdminSitesPage() {
   const [categories, setCategories] = useState<Array<{ id: string; name: string }>>([])
 
   // 加载网站列表
-  const loadSites = async (currentPage = page, currentPageSize = pageSize) => {
-    setLoading(true)
+  // 请求代际守卫：快速连点页码/筛选与搜索并发时，慢的旧响应不得覆盖新状态
+  // （照搬 dashboard 页 loadGenerationRef 模式）
+  const loadGenerationRef = useRef(0)
+
+  // silent=true 时跳过 loading 态：用于拖拽排序保存后的保底刷新，
+  // 本地顺序已正确，整表替换成 spinner 再重建会造成明显闪动
+  const loadSites = async (
+    currentPage = page,
+    currentPageSize = pageSize,
+    silent = false
+  ) => {
+    const generation = ++loadGenerationRef.current
+    if (!silent) setLoading(true)
     try {
       const result = await getSitesWithPagination({
         page: currentPage,
@@ -146,6 +170,8 @@ export default function AdminSitesPage() {
         sortBy,
         sortDir,
       })
+      // 过期响应：已有更新的请求在途或完成，丢弃本次结果（含错误提示）
+      if (generation !== loadGenerationRef.current) return
       if (result.success && result.data) {
         // 删除末页最后一条/筛选缩小结果后页码越界：clamp 回最后一个有效页重新拉取，
         // 避免「空列表 + 分页控件隐藏」的死端（与分类页口径一致）
@@ -155,7 +181,7 @@ export default function AdminSitesPage() {
           result.pagination.totalPages >= 1 &&
           currentPage > result.pagination.totalPages
         ) {
-          await loadSites(result.pagination.totalPages, currentPageSize)
+          await loadSites(result.pagination.totalPages, currentPageSize, silent)
           return
         }
         setSites(result.data)
@@ -167,11 +193,13 @@ export default function AdminSitesPage() {
         })
       }
     } catch (error) {
+      if (generation !== loadGenerationRef.current) return
       toast.error(tc("loadFailed"), {
         description: tc("retryLater"),
       })
     } finally {
-      setLoading(false)
+      // 仅最新一代请求有权关 loading（被丢弃的请求可能更早返回）
+      if (generation === loadGenerationRef.current) setLoading(false)
     }
   }
 
@@ -195,6 +223,53 @@ export default function AdminSitesPage() {
     loadSitesRef.current = loadSites
     loadCategoriesRef.current = loadCategories
   })
+
+  // 跨页拖拽：指针在视口上/下边缘感应区停留时自动翻页（静默加载不闪 spinner），
+  // 可连续翻多页；拖回页面中部取消计时。置于 loadSites/pagination 声明之后（deps 渲染期求值）
+  const EDGE_ZONE_PX = 72
+  const EDGE_FLIP_DELAY_MS = 500
+  useEffect(() => {
+    if (!draggedSiteId || !dragOrderEnabled) return
+    const cancelFlip = () => {
+      if (edgeFlipTimerRef.current) {
+        clearTimeout(edgeFlipTimerRef.current)
+        edgeFlipTimerRef.current = null
+      }
+    }
+    const onWindowDragOver = (e: DragEvent) => {
+      if (flippingRef.current) return
+      const dir =
+        e.clientY < EDGE_ZONE_PX ? -1 : e.clientY > window.innerHeight - EDGE_ZONE_PX ? 1 : 0
+      if (dir === 0) {
+        cancelFlip()
+        return
+      }
+      const targetPage = page + dir
+      if (targetPage < 1 || (pagination && targetPage > pagination.totalPages)) {
+        cancelFlip()
+        return
+      }
+      // 已在倒计时中：维持原计划（dragover 持续触发，不能反复重置）
+      if (edgeFlipTimerRef.current) return
+      edgeFlipTimerRef.current = setTimeout(async () => {
+        edgeFlipTimerRef.current = null
+        flippingRef.current = true
+        try {
+          // 翻页后重置落点记忆，让新页第一行可立即作为落点
+          lastOverIdRef.current = null
+          setCrossPageTargetId(null)
+          await loadSitesRef.current(targetPage, pageSize, true)
+        } finally {
+          flippingRef.current = false
+        }
+      }, EDGE_FLIP_DELAY_MS)
+    }
+    window.addEventListener("dragover", onWindowDragOver)
+    return () => {
+      window.removeEventListener("dragover", onWindowDragOver)
+      cancelFlip()
+    }
+  }, [draggedSiteId, dragOrderEnabled, page, pageSize, pagination])
 
   useEffect(() => {
     loadSitesRef.current(1)
@@ -286,42 +361,120 @@ export default function AdminSitesPage() {
   }, [dragOrderEnabled, filterCategory])
 
   const handleDragStartRow = (siteId: string) => {
+    dragMovedRef.current = false
+    lastOverIdRef.current = null
+    dragStartOrderRef.current = sites
     setDraggedSiteId(siteId)
   }
 
+  // 拖到其他行上时立即实时交换位置，拖动过程所见即所得
   const handleDragEnterRow = (siteId: string) => {
-    if (!draggedSiteId || siteId === draggedSiteId) return
-    setDragOverSiteId(siteId)
+    if (!draggedSiteId || siteId === draggedSiteId || lastOverIdRef.current === siteId) return
+    lastOverIdRef.current = siteId
+
+    // 跨页拖拽：被拖行不在当前页（无法页内实时重排），仅标记落点显示插入指示线；
+    // 翻回被拖行所在页后自动恢复页内实时重排
+    if (!sites.some(s => s.id === draggedSiteId)) {
+      setCrossPageTargetId(siteId)
+      dragMovedRef.current = true
+      return
+    }
+    setCrossPageTargetId(null)
+
+    setSites(prev => {
+      const from = prev.findIndex(s => s.id === draggedSiteId)
+      if (from < 0) return prev
+      const next = [...prev]
+      const [moved] = next.splice(from, 1)
+      const to = next.findIndex(s => s.id === siteId)
+      if (to < 0) return prev
+      next.splice(to, 0, moved)
+      dragMovedRef.current = true
+      return next
+    })
   }
 
-  const handleDropRow = async () => {
-    const from = sites.findIndex(s => s.id === draggedSiteId)
-    const to = sites.findIndex(s => s.id === dragOverSiteId)
+  // dragEnd 总会触发；按被拖行是否在当前页分流：页内走实时重排映射落库，
+  // 跨页直接在完整底册中移动到落点之前
+  const handleDragEndRow = async () => {
+    const dragged = draggedSiteId
+    const moved = dragMovedRef.current
+    const crossTarget = crossPageTargetId
+    dragMovedRef.current = false
+    lastOverIdRef.current = null
     setDraggedSiteId(null)
-    setDragOverSiteId(null)
-    if (from < 0 || to < 0 || from === to) return
+    setCrossPageTargetId(null)
+    if (!dragged || !moved) return
 
-    const nextVisible = [...sites]
-    const [moved] = nextVisible.splice(from, 1)
-    nextVisible.splice(to, 0, moved)
+    // ================= 跨页路径 =================
+    if (!sites.some(s => s.id === dragged)) {
+      const full = [...fullOrderRef.current]
+      // 底册未就绪或无有效落点时放弃落库：用残缺列表写入会压扁其他页的顺序
+      if (full.length === 0 || !crossTarget) return
+      const fromIdx = full.findIndex(x => x.id === dragged)
+      if (fromIdx < 0) return
+      const [removed] = full.splice(fromIdx, 1)
+      let toIdx = full.findIndex(x => x.id === crossTarget)
+      if (toIdx < 0) toIdx = full.length
+      full.splice(toIdx, 0, removed)
+      // 稳定置顶分区（置顶区/普通区各自保序），与页内落库口径一致
+      const ordered = [
+        ...full.filter(x => x.isPinned),
+        ...full.filter(x => !x.isPinned),
+      ]
+
+      setSavingOrder(true)
+      try {
+        const result = await updateSitesOrder(filterCategory, ordered.map(x => x.id))
+        if (result.success) {
+          fullOrderRef.current = ordered
+          refreshFullOrder()
+          toast.success(t("orderUpdated"))
+          loadSites(page, pageSize, true)
+        } else {
+          toast.error(tc("operationFailed"), {
+            description: resolveActionError(tAE, result.error, tc("retryLater")),
+          })
+        }
+      } catch {
+        toast.error(tc("operationFailed"), {
+          description: tc("retryLater"),
+        })
+      } finally {
+        setSavingOrder(false)
+      }
+      return
+    }
+
+    // ================= 页内路径 =================
     // 置顶站点始终显示在最前：落库前稳定分区（置顶区/普通区各自保序），
     // 避免「拖到置顶上方、刷新后却不生效」的错觉
     const newVisible = [
-      ...nextVisible.filter(s => s.isPinned),
-      ...nextVisible.filter(s => !s.isPinned),
+      ...sites.filter(s => s.isPinned),
+      ...sites.filter(s => !s.isPinned),
     ].map(s => s.id)
 
-    // 用可见页的新顺序替换完整底册中对应位置的条目（位置集合不变，仅换内容，置顶标记随站点走）
-    const siteById = new Map(sites.map(s => [s.id, { id: s.id, isPinned: !!s.isPinned }]))
+    // 用可见页的新顺序替换完整底册中对应位置的条目（位置集合不变，仅换内容，置顶标记随站点走）；
+    // 位置按拖拽发起时的原始快照计算，因为 sites 已被实时重排改写。
+    // 底册与快照可能因并发操作（拖拽中删除/静默刷新）短暂不同步：
+    // 缺失的条目过滤掉而非断言崩溃，剩余条目仍按相对顺序落库
+    const siteById = new Map(dragStartOrderRef.current.map(s => [s.id, { id: s.id, isPinned: !!s.isPinned }]))
     const full = [...fullOrderRef.current]
     if (full.length > 0) {
-      const positions = sites
+      const positions = dragStartOrderRef.current
         .map(s => full.findIndex(x => x.id === s.id))
         .filter(p => p >= 0)
         .sort((a, b) => a - b)
-      positions.forEach((pos, i) => { full[pos] = siteById.get(newVisible[i])! })
+      const ordered = newVisible
+        .map(id => siteById.get(id))
+        .filter((x): x is { id: string; isPinned: boolean } => Boolean(x))
+      positions.forEach((pos, i) => {
+        if (ordered[i]) full[pos] = ordered[i]
+      })
     }
-    const fallbackOrder = newVisible.map(id => siteById.get(id)!).filter(Boolean)
+    const fallbackOrder = newVisible
+      .map(id => siteById.get(id))
+      .filter((x): x is { id: string; isPinned: boolean } => Boolean(x))
 
     setSavingOrder(true)
     try {
@@ -331,7 +484,7 @@ export default function AdminSitesPage() {
         fullOrderRef.current = full.length > 0 ? full : fallbackOrder
         refreshFullOrder()
         toast.success(t("orderUpdated"))
-        loadSites()
+        loadSites(page, pageSize, true)
       } else {
         toast.error(tc("operationFailed"), {
           description: resolveActionError(tAE, result.error, tc("retryLater")),
@@ -383,7 +536,16 @@ export default function AdminSitesPage() {
         fullOrderRef.current = full
         refreshFullOrder()
         toast.success(t("orderUpdated"))
-        loadSites()
+        // 两行都在当前页时先本地交换；静默刷新兜底（覆盖跨页交换的场景）
+        setSites(prev => {
+          const from = prev.findIndex(s => s.id === siteId)
+          const to = prev.findIndex(s => s.id === full[target].id)
+          if (from < 0 || to < 0) return prev
+          const next = [...prev]
+          ;[next[from], next[to]] = [next[to], next[from]]
+          return next
+        })
+        loadSites(page, pageSize, true)
       } else {
         toast.error(tc("operationFailed"), {
           description: resolveActionError(tAE, result.error, tc("retryLater")),
@@ -414,6 +576,7 @@ export default function AdminSitesPage() {
 
   // 页面切换处理
   const handlePageChange = (newPage: number) => {
+    if (loading) return
     if (newPage < 1 || (pagination && newPage > pagination.totalPages)) return
     loadSites(newPage)
   }
@@ -434,7 +597,9 @@ export default function AdminSitesPage() {
         toast.success(t("deleteSuccess"), {
           description: t("deleteSuccessDesc"),
         })
-        loadSites()
+        // 本地移除 + 静默刷新，避免整表闪 spinner（末页清空的 clamp 由 loadSites 内置）
+        setSites(prev => prev.filter(s => s.id !== deletingSiteId))
+        loadSites(page, pageSize, true)
       } else {
         toast.error(t("deleteFailed"), {
           description: resolveActionError(tAE, result.error, t("deleteFailedDesc")),
@@ -462,7 +627,8 @@ export default function AdminSitesPage() {
         toast.success(t("statusUpdated"), {
           description: t("publishToggledDesc"),
         })
-        loadSites()
+        setSites(prev => prev.map(s => (s.id === siteId ? { ...s, isPublished: !s.isPublished } : s)))
+        loadSites(page, pageSize, true)
       } else {
         toast.error(tc("operationFailed"), {
           description: resolveActionError(tAE, result.error, tc("operationFailed")),
@@ -488,7 +654,11 @@ export default function AdminSitesPage() {
         toast.success(currentPin ? t("unpinnedToast") : t("pinnedToast"), {
           description: currentPin ? t("unpinnedDesc") : t("pinnedDesc"),
         })
-        loadSites()
+        setSites(prev => prev.map(s => (s.id === siteId ? { ...s, isPinned: !s.isPinned } : s)))
+        // 置顶影响「置顶优先」排序（可能跨页移动），由静默刷新带回最终顺序；
+        // 底册同步刷新，保证 canMoveRow 的置顶分区判断基于最新 isPinned
+        refreshFullOrder()
+        loadSites(page, pageSize, true)
       } else {
         toast.error(tc("operationFailed"), {
           description: resolveActionError(tAE, result.error, t("pinToggleFailed")),
@@ -574,6 +744,10 @@ export default function AdminSitesPage() {
             const status = result.success && result.data
               ? (result.data as { healthStatus?: string }).healthStatus
               : undefined
+            // 行级局部更新，与单站测活同口径；不在当前页的站点 map 自然空转
+            if (status) {
+              setSites(prev => prev.map(s => (s.id === item.id ? { ...s, healthStatus: status } : s)))
+            }
             if (status === "up") {
               up += 1
             } else if (status === "suspicious") {
@@ -606,7 +780,8 @@ export default function AdminSitesPage() {
           description: t("checkAllDoneDesc", { up, down, suspicious }),
         })
       }
-      loadSites()
+      // 逐行已局部更新，这里静默刷新兜底对齐服务器数据
+      loadSites(page, pageSize, true)
     } finally {
       setBatchChecking(false)
     }
@@ -614,6 +789,13 @@ export default function AdminSitesPage() {
 
   return (
     <div className="space-y-4">
+      {/* 跨页拖拽进行中：视口上/下边缘显示翻页感应区指示条（停留自动翻页） */}
+      {draggedSiteId && dragOrderEnabled && (
+        <>
+          <div className="pointer-events-none fixed inset-x-0 top-0 z-50 h-1.5 animate-fade-in bg-gradient-to-b from-primary/50 to-transparent" />
+          <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 h-1.5 animate-fade-in bg-gradient-to-t from-primary/50 to-transparent" />
+        </>
+      )}
       {/* 筛选器工具栏 */}
       <div className="flex flex-wrap items-center gap-4">
           {/* 分类筛选 */}
@@ -800,7 +982,7 @@ export default function AdminSitesPage() {
               </EmptyHeader>
             </Empty>
           ) : (
-            <div className="overflow-hidden rounded-lg border">
+            <div ref={dragTableRef} className="overflow-hidden rounded-lg border">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -823,19 +1005,19 @@ export default function AdminSitesPage() {
                   {sites.map((site) => (
                     <TableRow
                       key={site.id}
-                      draggable={dragOrderEnabled}
+                      data-flip-id={site.id}
+                      draggable={dragOrderEnabled && !savingOrder}
                       onDragStart={() => handleDragStartRow(site.id)}
-                      onDragEnter={() => handleDragEnterRow(site.id)}
+                      onDragEnter={dragOrderEnabled ? () => handleDragEnterRow(site.id) : undefined}
                       onDragOver={(e) => dragOrderEnabled && e.preventDefault()}
-                      onDrop={dragOrderEnabled ? handleDropRow : undefined}
-                      onDragEnd={() => {
-                        setDraggedSiteId(null)
-                        setDragOverSiteId(null)
-                      }}
+                      onDragEnd={dragOrderEnabled ? handleDragEndRow : undefined}
                       className={[
                         site.isPinned ? "bg-amber-500/5" : "",
                         draggedSiteId === site.id ? "opacity-40" : "",
-                        dragOverSiteId === site.id && draggedSiteId !== site.id ? "bg-primary/5" : "",
+                        // 跨页拖拽的插入指示线：inset shadow 避免 table 边框合并模式的兼容问题
+                        crossPageTargetId === site.id && draggedSiteId !== site.id
+                          ? "shadow-[inset_0_2px_0_0_hsl(var(--primary))]"
+                          : "",
                       ].join(" ").trim() || undefined}
                     >
                       {dragOrderEnabled && (
@@ -1181,7 +1363,7 @@ export default function AdminSitesPage() {
         onOpenChange={setDialogOpen}
         site={editingSite}
         mode={dialogMode}
-        onSuccess={() => loadSites()}
+        onSuccess={() => loadSites(page, pageSize, true)}
       />
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

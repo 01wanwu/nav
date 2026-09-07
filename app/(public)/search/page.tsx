@@ -1,7 +1,9 @@
 import { SearchPageHeader } from "@/components/layout/search-page-header"
 import { Footer } from "@/components/layout/footer"
 import { SiteCard } from "@/components/layout/site-card"
-import { searchSites, getAllCategories, getDisplaySettings } from "@/lib/actions"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import { searchSites, getAllCategories } from "@/lib/actions"
+import { getCachedDisplaySettings } from "@/lib/workspace-render"
 import { redirect } from "next/navigation"
 import { getTranslations } from "next-intl/server"
 
@@ -14,7 +16,7 @@ interface SearchPageProps {
 export default async function SearchPage({ searchParams }: SearchPageProps) {
   const { q: query } = await searchParams
   const { data: categories } = await getAllCategories()
-  const settings = await getDisplaySettings()
+  const settings = await getCachedDisplaySettings()
   const t = await getTranslations("search")
 
   if (!query) {
@@ -53,11 +55,14 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {sites.map((site) => (
-                <SiteCard key={site.id} site={site} />
-              ))}
-            </div>
+            // SiteCard 紧凑模式依赖容器层 TooltipProvider（不再每卡自包）
+            <TooltipProvider delayDuration={150}>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {sites.map((site) => (
+                  <SiteCard key={site.id} site={site} />
+                ))}
+              </div>
+            </TooltipProvider>
           )}
         </div>
       </main>

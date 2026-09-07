@@ -189,27 +189,58 @@ function failureEntry(): CacheEntry {
   }
 }
 
-async function fetchUpstream(url: string): Promise<{ body: Uint8Array<ArrayBuffer>; contentType: string } | null> {
+// 代理目标校验：协议 + 白名单域。与 GET 入口的 URL 校验同口径，
+// 出站重定向的每一跳都必须重新过这道检查
+function isAllowedProxyUrl(value: string): boolean {
   try {
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-        Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-      },
-      cache: "no-store",
-    })
-    if (!res.ok) return null
+    const parsed = new URL(value)
+    return (
+      (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+      URL_PROXY_WHITELIST.has(parsed.hostname)
+    )
+  } catch {
+    return false
+  }
+}
 
-    const contentType = res.headers.get("content-type") || "image/png"
-    if (!contentType.startsWith("image/") && !contentType.includes("octet-stream")) return null
-    // SVG 可内嵌脚本：以本站同源回显会造成存储型 XSS，上游抓到一律拒绝
-    if (contentType.includes("svg")) return null
+async function fetchUpstream(url: string): Promise<{ body: Uint8Array<ArrayBuffer>; contentType: string } | null> {
+  // redirect:"manual"：默认 follow 会让白名单上游的 302 把请求引向任意/内网地址，
+  // 与 domain-verify/webhook 的出站口径保持一致；重定向手动逐跳校验后跟随
+  const MAX_REDIRECT_HOPS = 2
+  let current = url
 
-    const buffer = new Uint8Array(await res.arrayBuffer())
-    if (buffer.byteLength === 0) return null
-    return { body: buffer, contentType }
+  try {
+    for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
+      if (!isAllowedProxyUrl(current)) return null
+      const res = await fetch(current, {
+        redirect: "manual",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT),
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+          Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        },
+        cache: "no-store",
+      })
+      if ([301, 302, 303, 307, 308].includes(res.status)) {
+        const location = res.headers.get("location")
+        if (!location) return null
+        current = new URL(location, current).toString()
+        continue
+      }
+      if (!res.ok) return null
+
+      const contentType = res.headers.get("content-type") || "image/png"
+      if (!contentType.startsWith("image/") && !contentType.includes("octet-stream")) return null
+      // SVG 可内嵌脚本：以本站同源回显会造成存储型 XSS，上游抓到一律拒绝
+      if (contentType.includes("svg")) return null
+
+      const buffer = new Uint8Array(await res.arrayBuffer())
+      if (buffer.byteLength === 0) return null
+      return { body: buffer, contentType }
+    }
+    // 超出最大跳数仍在重定向：按上游失败处理（走负缓存）
+    return null
   } catch {
     return null
   }

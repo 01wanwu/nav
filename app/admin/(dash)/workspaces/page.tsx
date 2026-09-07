@@ -90,6 +90,12 @@ export default function AdminWorkspacesPage() {
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState<Workspace | null>(null)
+  // 防重入门卫：设为默认 / 删除工作区 / 解绑域名各自独立 busy
+  const [primaryBusy, setPrimaryBusy] = useState<string | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [removeDomainBusy, setRemoveDomainBusy] = useState(false)
+  // 域名解绑确认框
+  const [removingDomain, setRemovingDomain] = useState<DomainItem | null>(null)
 
   // 域名管理：记录正在操作的工作区与输入中的 host
   const [domainInput, setDomainInput] = useState<Record<string, string>>({})
@@ -122,31 +128,49 @@ export default function AdminWorkspacesPage() {
   }, [])
 
   async function handleSetPrimary(ws: Workspace) {
-    const result = await setPrimaryWorkspace(ws.id)
-    if (result.success) {
-      toast.success(t("primarySet", { name: ws.name }))
-      loadRef.current()
-    } else {
-      toast.error(resolveActionError(tAE, result.error, t("actionFailed")))
+    if (primaryBusy) return
+    setPrimaryBusy(ws.id)
+    try {
+      const result = await setPrimaryWorkspace(ws.id)
+      if (result.success) {
+        toast.success(t("primarySet", { name: ws.name }))
+        loadRef.current()
+      } else {
+        toast.error(resolveActionError(tAE, result.error, t("actionFailed")))
+      }
+    } catch {
+      toast.error(tc("operationFailed"), { description: tc("retryLater") })
+    } finally {
+      setPrimaryBusy(null)
     }
   }
 
   async function handleDelete() {
-    if (!deleting) return
-    const result = await deleteWorkspace(deleting.id)
-    if (result.success) {
-      toast.success(t("deleteSuccess"))
-      loadRef.current()
-    } else {
-      toast.error(resolveActionError(tAE, result.error, t("actionFailed")))
+    if (!deleting || deleteBusy) return
+    setDeleteBusy(true)
+    try {
+      const result = await deleteWorkspace(deleting.id)
+      if (result.success) {
+        toast.success(t("deleteSuccess"))
+        loadRef.current()
+      } else {
+        toast.error(resolveActionError(tAE, result.error, t("actionFailed")))
+      }
+    } catch {
+      // 异常也必须关确认框：否则框卡死且二次点击会重复调用
+      toast.error(tc("operationFailed"), { description: tc("retryLater") })
+    } finally {
+      setDeleteBusy(false)
+      setDeleteOpen(false)
+      setDeleting(null)
     }
-    setDeleteOpen(false)
-    setDeleting(null)
   }
 
   async function handleAddDomain(ws: Workspace) {
     const raw = (domainInput[ws.id] || "").trim()
     if (!raw) return
+    // 入口检查 busy：Input 的 Enter 提交绕过按钮的 disabled，必须自行防重入
+    if (domainBusy[ws.id]) return
     setDomainBusy(prev => ({ ...prev, [ws.id]: true }))
     try {
       const result = await addWorkspaceDomain(ws.id, raw)
@@ -169,18 +193,30 @@ export default function AdminWorkspacesPage() {
           )
         )
       }
+    } catch {
+      toast.error(tc("operationFailed"), { description: tc("retryLater") })
     } finally {
       setDomainBusy(prev => ({ ...prev, [ws.id]: false }))
     }
   }
 
-  async function handleRemoveDomain(domain: DomainItem) {
-    const result = await removeWorkspaceDomain(domain.id)
-    if (result.success) {
-      toast.success(t("domainRemoved"))
-      loadRef.current()
-    } else {
-      toast.error(resolveActionError(tAE, result.error, t("actionFailed")))
+  // 域名解绑：经确认框触发（原先 X 直连无确认且无防重入）
+  async function handleRemoveDomain() {
+    if (!removingDomain || removeDomainBusy) return
+    setRemoveDomainBusy(true)
+    try {
+      const result = await removeWorkspaceDomain(removingDomain.id)
+      if (result.success) {
+        toast.success(t("domainRemoved"))
+        loadRef.current()
+      } else {
+        toast.error(resolveActionError(tAE, result.error, t("actionFailed")))
+      }
+    } catch {
+      toast.error(tc("operationFailed"), { description: tc("retryLater") })
+    } finally {
+      setRemoveDomainBusy(false)
+      setRemovingDomain(null)
     }
   }
 
@@ -310,8 +346,17 @@ export default function AdminWorkspacesPage() {
                       {!ws.isDefault && (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Button variant="outline" size="sm" onClick={() => handleSetPrimary(ws)}>
-                              <Star className="mr-1 h-3.5 w-3.5" />
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={primaryBusy !== null}
+                              onClick={() => handleSetPrimary(ws)}
+                            >
+                              {primaryBusy === ws.id ? (
+                                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Star className="mr-1 h-3.5 w-3.5" />
+                              )}
                               {t("setPrimary")}
                             </Button>
                           </TooltipTrigger>
@@ -382,7 +427,8 @@ export default function AdminWorkspacesPage() {
                             </button>
                             <button
                               className="rounded-full hover:text-destructive"
-                              onClick={() => handleRemoveDomain(d)}
+                              disabled={removeDomainBusy}
+                              onClick={() => setRemovingDomain(d)}
                               aria-label={t("removeDomain")}
                             >
                               <X className="h-3 w-3" />
@@ -452,11 +498,45 @@ export default function AdminWorkspacesPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{tc("cancel")}</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteBusy}>{tc("cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={handleDelete}
+              disabled={deleteBusy}
+              onClick={(e) => {
+                // 阻止 Radix 默认关闭：等落库完成后由 finally 关闭，避免「点了没反应」
+                e.preventDefault()
+                handleDelete()
+              }}
             >
+              {deleteBusy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+              {tc("confirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={Boolean(removingDomain)}
+        onOpenChange={(open) => !open && !removeDomainBusy && setRemovingDomain(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("deleteDomainTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("deleteDomainDesc", { host: removingDomain?.host || "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removeDomainBusy}>{tc("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={removeDomainBusy}
+              onClick={(e) => {
+                e.preventDefault()
+                handleRemoveDomain()
+              }}
+            >
+              {removeDomainBusy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
               {tc("confirm")}
             </AlertDialogAction>
           </AlertDialogFooter>

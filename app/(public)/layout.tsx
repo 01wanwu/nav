@@ -1,4 +1,4 @@
-import { getDisplaySettings } from "@/lib/actions"
+import { getCachedDisplaySettings } from "@/lib/workspace-render"
 import { ClientPluginsProvider } from "@/lib/plugins/client"
 import { getClientPluginsView } from "@/lib/plugins/server"
 
@@ -10,7 +10,7 @@ export default async function PublicLayout({
   children: React.ReactNode
 }>) {
   // 自定义代码注入依赖展示配置（工作区覆盖后的最终值）
-  const settings = await getDisplaySettings()
+  const settings = await getCachedDisplaySettings()
   const initialPlugins = await getClientPluginsView()
 
   return (

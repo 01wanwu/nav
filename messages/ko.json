@@ -641,6 +641,8 @@
       "deleteSuccess": "워크스페이스가 삭제되었습니다",
       "deleteTitle": "워크스페이스 삭제",
       "deleteDesc": "워크스페이스 \"{name}\"을(를) 삭제할까요? 카테고리가 없는 비기본 워크스페이스만 삭제할 수 있습니다.",
+      "deleteDomainTitle": "도메인 연결 해제",
+      "deleteDomainDesc": "{host}의 연결을 해제할까요? 해제 후 해당 도메인에서는 이 워크스페이스에 접근할 수 없습니다.",
       "actionFailed": "작업 실패",
       "domains": "도메인 바인딩",
       "noDomains": "바인딩 없음(기본 매칭)",

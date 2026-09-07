@@ -2,7 +2,8 @@ import { SearchableLayout } from "@/components/layout/searchable-layout"
 import { SiteGrid } from "@/components/layout/site-grid"
 import { CategoryIconBadge } from "@/components/category-icon"
 import type { OverviewData } from "@/components/layout/overview-view"
-import { getCategories, getDisplaySettings } from "@/lib/actions"
+import { getCategories } from "@/lib/actions"
+import { getCachedDisplaySettings } from "@/lib/workspace-render"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { getTranslations } from "next-intl/server"
@@ -10,8 +11,11 @@ import { getTranslations } from "next-intl/server"
 // 语言解析依赖请求级 Cookie（i18n/request.ts），页面按请求动态渲染；
 // 后台数据更新时由 revalidatePath("/") 触发立即重新渲染
 export default async function HomePage() {
-  const { data: categories } = await getCategories()
-  const settings = await getDisplaySettings()
+  // 分类（含站点）与展示设置互不依赖，并行取数
+  const [{ data: categories }, settings] = await Promise.all([
+    getCategories(),
+    getCachedDisplaySettings(),
+  ])
   const t = await getTranslations("home")
 
   // 顶栏导航与全局搜索数据直接从分类结果投影，避免再发起两份近重复的全量加载

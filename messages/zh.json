@@ -641,6 +641,8 @@
       "deleteSuccess": "工作区已删除",
       "deleteTitle": "删除工作区",
       "deleteDesc": "确定要删除工作区「{name}」吗？仅可删除不含分类且非默认的工作区。",
+      "deleteDomainTitle": "确认解绑域名",
+      "deleteDomainDesc": "确定要解绑 {host} 吗？解绑后该域名将不再访问此工作区。",
       "actionFailed": "操作失败",
       "domains": "域名绑定",
       "noDomains": "未绑定域名（走默认匹配）",

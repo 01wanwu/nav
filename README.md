@@ -303,7 +303,7 @@ pm2 save
 | `POSTGRES_URL` | PostgreSQL connection string (highest priority for auto-detection) | `postgresql://user:pass@localhost:5432/nav` | ❌ (PostgreSQL mode only) |
 | `DATABASE_URL` | Legacy compat: a `postgres://` prefixed value is treated as `POSTGRES_URL` | `postgresql://user:pass@host:5432/nav` | ❌ |
 | `SQLITE_PATH` | SQLite database file path (directory and file are created automatically) | `./data/nav.db` | ❌ (default) |
-| `SESSION_SECRET` | Session signing key (HMAC), falls back to `NEXTAUTH_SECRET` | random string (`openssl rand -base64 32`) | ❌ (auto-generated per build if unset; set it to survive image rebuilds) |
+| `SESSION_SECRET` | Session signing key (HMAC), falls back to `NEXTAUTH_SECRET` | random string (`openssl rand -base64 32`) | ✅ in production (server refuses to start without it; dev/build fall back to a per-build random key) |
 | `NEXTAUTH_SECRET` | Encryption key (also used as session signing fallback) | random string (`openssl rand -base64 32`) | ❌ (one of the two; Docker generates a fallback) |
 | `NEXTAUTH_URL` | Full app URL | `http://localhost:3000` or `https://your-domain.com` | ❌ (Docker default) |
 | `POSTGRES_PASSWORD` | PostgreSQL password for the `postgres` compose profile | random long string | ✅ (postgres profile only) |

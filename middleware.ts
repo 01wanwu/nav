@@ -179,8 +179,10 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // 工作区域名解析需要覆盖全部动态路由；排除静态资源与健康检查
+  // 工作区域名解析需要覆盖全部动态路由；排除静态资源、健康检查，
+  // 以及全站 QPS 最高的 api/icon 与 api/visit —— 两者不读注入的工作区头
+  // （icon 自带白名单校验、visit 只读原始转发头），无需过 middleware
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/health|robots.txt|sitemap.xml).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/health|api/icon|api/visit|robots.txt|sitemap.xml).*)",
   ],
 }

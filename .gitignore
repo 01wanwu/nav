@@ -75,3 +75,4 @@ CLAUDE.md
 # temporary screenshots
 screenshots/*
 !screenshots/0[1-8]-*.png
+docs/audit-2026-09.md

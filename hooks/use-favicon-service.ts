@@ -5,21 +5,18 @@ import { useState, useEffect } from "react"
 // Favicon 服务类型
 export type FaviconService = "favicon-im" | "bqb-cool" | "duckduckgo"
 
-// Favicon 服务配置
+// Favicon 服务配置（name 供切换按钮展示，url 供前台拼图标地址）
 export const FAVICON_SERVICES = {
   "favicon-im": {
     name: "favicon.im",
-    description: "极速 CDN",
     url: (domain: string) => `https://favicon.im/${domain}`,
   },
   "bqb-cool": {
     name: "icon.bqb.cool",
-    description: "99% 成功率",
     url: (domain: string) => `https://icon.bqb.cool?url=https://${domain}`,
   },
   duckduckgo: {
     name: "duckduckgo",
-    description: "国际服务",
     url: (domain: string) => `https://icons.duckduckgo.com/ip3/${domain}.ico`,
   },
 } as const

@@ -31,9 +31,9 @@ export default function Loading() {
         </div>
       </header>
 
-      {/* Main Content Skeleton - 匹配真实页面结构 */}
+      {/* Main Content Skeleton - 匹配真实页面结构（容器宽度与列数对齐首页，避免加载结束跳变） */}
       <main className="flex-1 px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mx-auto max-w-7xl w-full">
+        <div className="mx-auto max-w-[1600px] w-full lg:pl-2">
           <div className="space-y-12">
             {[...Array(3)].map((_, i) => (
               <section key={i} className="space-y-6">
@@ -44,7 +44,7 @@ export default function Loading() {
                 </div>
 
                 {/* 网站卡片骨架 */}
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
                   {[...Array(8)].map((_, j) => (
                     <div key={j} className="h-32 rounded-lg border bg-muted/20" />
                   ))}

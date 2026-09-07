@@ -176,6 +176,12 @@ export default function AdminSettingsPage() {
   const handleSaveSettings = async () => {
     setSavingSettings(true)
     try {
+      // 「添加链接」会先插入空行：name 与 url 均为空的行不提交，
+      // 避免用户点了添加未填写就保存被服务端校验拒绝
+      const settingsPayload = {
+        ...settings,
+        footerLinks: settings.footerLinks.filter(l => l.name.trim() || l.url.trim()),
+      }
       // 基本信息四项按工作区上下文分流：默认工作区并入全局设置一次写入；
       // 非默认工作区写覆盖字段（其余设置仍写全局）
       let result
@@ -195,17 +201,18 @@ export default function AdminSettingsPage() {
             favicon: _f,
             aboutContent: _a,
             ...rest
-          } = settings
+          } = settingsPayload
           result = await updateSystemSettings(rest)
         }
       } else {
-        result = await updateSystemSettings(settings)
+        result = await updateSystemSettings(settingsPayload)
       }
       if (result.success) {
         toast.success(t("saveSuccess"), {
           description: t("saveSuccessDesc"),
         })
-        setTimeout(() => window.location.reload(), 500)
+        // 不再 window.location.reload()：本地 state 已是提交值，
+        // 硬刷新会丢滚动位置并把设置页导航重置回 basic 区块
       } else {
         toast.error(t("saveFailed"), {
           description: (result as { error?: string }).error || t("saveFailedDesc"),

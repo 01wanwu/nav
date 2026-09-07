@@ -47,12 +47,13 @@ export async function recordVisit(siteId: string, request?: Request) {
     let referer = null
 
     if (request) {
-      // x-forwarded-for 可能为逗号分隔的 IP 链，取首段作为客户端 IP
-      ipAddress = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+      // x-forwarded-for 可能为逗号分隔的 IP 链，取首段作为客户端 IP。
+      // 头字段原文入库且无长度上限时单行可被塞入 MB 级数据（公开端点可滥用），统一截断
+      ipAddress = (request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
                   request.headers.get('x-real-ip') ||
-                  null
-      userAgent = request.headers.get('user-agent') || null
-      referer = request.headers.get('referer') || null
+                  '')?.slice(0, 64) || null
+      userAgent = request.headers.get('user-agent')?.slice(0, 512) || null
+      referer = request.headers.get('referer')?.slice(0, 2048) || null
     }
 
     const visit = await prisma.visit.create({

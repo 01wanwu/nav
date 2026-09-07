@@ -56,6 +56,7 @@ import { toast } from "sonner"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { useTranslations } from "next-intl"
 import { resolveActionError } from "@/lib/action-error"
+import { useFlipList } from "@/hooks/use-flip-list"
 
 interface Category {
   id: string
@@ -82,8 +83,11 @@ export default function AdminCategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
   const [isSavingOrder, setIsSavingOrder] = useState(false)
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  // 拖拽排序：id 追踪 + 实时重排预览（dragover 时立即交换位置），dragEnd 才落库
+  const [draggedId, setDraggedId] = useState<string | null>(null)
+  const dragMovedRef = useRef(false)
+  const lastOverIdRef = useRef<string | null>(null)
+  const dragTableRef = useFlipList(useRef<HTMLDivElement>(null), draggedId !== null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null)
   const [dialogMode, setDialogMode] = useState<"create" | "edit">("create")
@@ -95,10 +99,16 @@ export default function AdminCategoriesPage() {
   const [pagination, setPagination] = useState<PaginationInfo | null>(null)
 
   // 加载分类列表
-  const loadCategories = async (currentPage = page) => {
-    setLoading(true)
+  // silent=true 时跳过 loading 态：用于删除/保存成功后的保底刷新，
+  // 本地状态已更新，整表替换成 spinner 再重建会造成明显闪动
+  const loadGenerationRef = useRef(0)
+  const loadCategories = async (currentPage = page, silent = false) => {
+    const generation = ++loadGenerationRef.current
+    if (!silent) setLoading(true)
     try {
       const result = await getCategoriesWithPagination({ page: currentPage, pageSize: 20 })
+      // 过期响应：已有更新的请求在途或完成，丢弃本次结果（含错误提示）
+      if (generation !== loadGenerationRef.current) return
       if (result.success && result.data) {
         // 删除末页最后一条后页码越界：clamp 回最后一个有效页重新拉取，
         // 避免「空列表 + 分页控件隐藏」的死端
@@ -108,7 +118,7 @@ export default function AdminCategoriesPage() {
           result.pagination.totalPages >= 1 &&
           currentPage > result.pagination.totalPages
         ) {
-          await loadCategories(result.pagination.totalPages)
+          await loadCategories(result.pagination.totalPages, silent)
           return
         }
         // Sort by order ascending
@@ -122,11 +132,13 @@ export default function AdminCategoriesPage() {
         })
       }
     } catch (error) {
+      if (generation !== loadGenerationRef.current) return
       toast.error(tc("loadFailed"), {
         description: tc("retryLater"),
       })
     } finally {
-      setLoading(false)
+      // 仅最新一代请求有权关 loading（被丢弃的请求可能更早返回）
+      if (generation === loadGenerationRef.current) setLoading(false)
     }
   }
 
@@ -178,42 +190,51 @@ export default function AdminCategoriesPage() {
   }
 
   // 拖拽排序逻辑
-  const handleDragStart = (index: number) => {
-    setDraggedIndex(index)
+  const handleDragStart = (id: string) => {
+    dragMovedRef.current = false
+    lastOverIdRef.current = null
+    setDraggedId(id)
   }
 
-  const handleDragOver = (e: React.DragEvent, index: number) => {
+  // 拖到其他行上时立即实时交换位置，拖动过程所见即所得
+  const handleDragOver = (e: React.DragEvent, id: string) => {
     e.preventDefault()
-    if (draggedIndex === null || draggedIndex === index) return
-    setDragOverIndex(index)
+    if (!draggedId || draggedId === id || lastOverIdRef.current === id) return
+    lastOverIdRef.current = id
+
+    setCategories(prev => {
+      const from = prev.findIndex(c => c.id === draggedId)
+      if (from < 0) return prev
+      const next = [...prev]
+      const [moved] = next.splice(from, 1)
+      const to = next.findIndex(c => c.id === id)
+      if (to < 0) return prev
+      next.splice(to, 0, moved)
+      dragMovedRef.current = true
+      return next.map((item, idx) => ({ ...item, order: idx + 1 }))
+    })
   }
 
+  // dragEnd 总会触发（包括拖出列表松手）；有实际移动才持久化
   const handleDragEnd = () => {
-    if (draggedIndex !== null && dragOverIndex !== null && draggedIndex !== dragOverIndex) {
-      const updated = [...categories]
-      const [movedItem] = updated.splice(draggedIndex, 1)
-      updated.splice(dragOverIndex, 0, movedItem)
-
-      // Re-assign order numbers
-      const withNewOrders = updated.map((item, idx) => ({
-        ...item,
-        order: idx + 1,
-      }))
-      setCategories(withNewOrders)
-      persistOrder(withNewOrders)
-    }
-    setDraggedIndex(null)
-    setDragOverIndex(null)
+    const moved = dragMovedRef.current
+    dragMovedRef.current = false
+    lastOverIdRef.current = null
+    setDraggedId(null)
+    // 列表已在 dragover 中实时重排完成，闭包中的 categories 即最终顺序
+    if (moved) persistOrder(categories)
   }
 
   // 上移/下移
-  const handleMove = (index: number, direction: "up" | "down") => {
-    const targetIndex = direction === "up" ? index - 1 : index + 1
+  const handleMove = (id: string, direction: "up" | "down") => {
+    const from = categories.findIndex(c => c.id === id)
+    if (from < 0) return
+    const targetIndex = direction === "up" ? from - 1 : from + 1
     if (targetIndex < 0 || targetIndex >= categories.length) return
 
     const updated = [...categories]
-    const temp = updated[index]
-    updated[index] = updated[targetIndex]
+    const temp = updated[from]
+    updated[from] = updated[targetIndex]
     updated[targetIndex] = temp
 
     const withNewOrders = updated.map((item, idx) => ({
@@ -240,6 +261,7 @@ export default function AdminCategoriesPage() {
 
   // 页面切换处理
   const handlePageChange = (newPage: number) => {
+    if (loading) return
     if (newPage < 1 || (pagination && newPage > pagination.totalPages)) return
     loadCategories(newPage)
   }
@@ -260,7 +282,9 @@ export default function AdminCategoriesPage() {
         toast.success(t("deleteSuccess"), {
           description: t("deleteSuccessDesc"),
         })
-        loadCategories()
+        // 本地移除 + 静默刷新，避免整表闪 spinner（末页清空的 clamp 由 loadCategories 内置）
+        setCategories(prev => prev.filter(c => c.id !== deletingCategoryId))
+        loadCategories(page, true)
       } else {
         toast.error(t("deleteFailed"), {
           description: resolveActionError(
@@ -335,7 +359,7 @@ export default function AdminCategoriesPage() {
               </EmptyContent>
             </Empty>
           ) : (
-            <div className="overflow-hidden rounded-lg border">
+            <div ref={dragTableRef} className="overflow-hidden rounded-lg border">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -348,22 +372,18 @@ export default function AdminCategoriesPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {categories.map((category, index) => {
-                    const isDragging = draggedIndex === index
-                    const isOver = dragOverIndex === index
+                  {categories.map((category) => {
+                    const isDragging = draggedId === category.id
 
                     return (
                       <TableRow
                         key={category.id}
-                        draggable
-                        onDragStart={() => handleDragStart(index)}
-                        onDragOver={(e) => handleDragOver(e, index)}
+                        data-flip-id={category.id}
+                        draggable={!isSavingOrder}
+                        onDragStart={() => handleDragStart(category.id)}
+                        onDragOver={(e) => handleDragOver(e, category.id)}
                         onDragEnd={handleDragEnd}
-                        className={`transition-all ${
-                          isDragging ? "opacity-40 bg-muted/70 cursor-grabbing" : ""
-                        } ${
-                          isOver && !isDragging ? "border-t-2 border-primary bg-primary/5" : ""
-                        }`}
+                        className={isDragging ? "opacity-40 bg-muted/70 cursor-grabbing" : ""}
                       >
                         {/* 拖拽手柄 & 序号 */}
                         <TableCell className="text-center">
@@ -426,8 +446,8 @@ export default function AdminCategoriesPage() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-7 w-7"
-                                    onClick={() => handleMove(index, "up")}
-                                    disabled={index === 0 || isSavingOrder}
+                                    onClick={() => handleMove(category.id, "up")}
+                                    disabled={category.order === 1 || isSavingOrder}
                                   >
                                     <ArrowUp className="h-3.5 w-3.5" />
                                   </Button>
@@ -443,8 +463,8 @@ export default function AdminCategoriesPage() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-7 w-7"
-                                    onClick={() => handleMove(index, "down")}
-                                    disabled={index === categories.length - 1 || isSavingOrder}
+                                    onClick={() => handleMove(category.id, "down")}
+                                    disabled={category.order === categories.length || isSavingOrder}
                                   >
                                     <ArrowDown className="h-3.5 w-3.5" />
                                   </Button>
@@ -565,7 +585,7 @@ export default function AdminCategoriesPage() {
         onOpenChange={setDialogOpen}
         categoryId={editingCategoryId}
         mode={dialogMode}
-        onSuccess={() => loadCategories()}
+        onSuccess={() => loadCategories(page, true)}
       />
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

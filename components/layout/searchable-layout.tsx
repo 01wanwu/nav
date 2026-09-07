@@ -1,8 +1,8 @@
 "use client"
 
 import { useState, useMemo, useEffect } from "react"
+import { usePathname } from "next/navigation"
 import { useTranslations } from "next-intl"
-import { pinyin } from "pinyin-pro"
 import { ScrollHeader } from "./scroll-header"
 import { Footer } from "./footer"
 import { SiteGrid } from "./site-grid"
@@ -11,6 +11,7 @@ import { SiteDetailProvider } from "./site-detail-provider"
 import { OverviewView, type OverviewData } from "./overview-view"
 import { useCardDensity } from "@/hooks/use-card-density"
 import { Badge } from "@/components/ui/badge"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import {
   PluginSlot,
   useHomeSideActive,
@@ -55,22 +56,34 @@ export function SearchableLayout({
   children,
 }: SearchableLayoutProps) {
   const [searchQuery, setSearchQuery] = useState("")
-  const [isHomePath, setIsHomePath] = useState(false)
   // homeSide 插件（如今日诗词）启用时，为右侧浮动卡片预留稳定槽位
   const homeSideActive = useHomeSideActive()
   const { isOverview } = useCardDensity()
   const t = useTranslations("search")
 
+  // usePathname 随客户端导航自动更新；旧的 window.location.pathname 方案
+  // 导航后不更新，会导致非首页的锚点链接判断失效
+  const pathname = usePathname()
+  const anchorLinks = useAnchorLinks ?? pathname === "/"
+
+  // pinyin-pro 含全量词典（约 1MB），且为全站逐条计算拼音有明显 CPU 开销：
+  // 只在用户开始搜索时懒加载引擎并计算映射，首屏不加载、不计算
+  const [pinyinModule, setPinyinModule] = useState<typeof import("pinyin-pro") | null>(null)
   useEffect(() => {
-    if (typeof window === "undefined") return
-    setIsHomePath(window.location.pathname === "/" || window.location.pathname === "")
-  }, [])
+    if (!searchQuery.trim() || pinyinModule) return
+    let cancelled = false
+    import("pinyin-pro").then(mod => {
+      if (!cancelled) setPinyinModule(mod)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [searchQuery, pinyinModule])
 
-  const anchorLinks = useAnchorLinks ?? isHomePath
-
-  // 预计算每个 site 的拼音，用于拼音搜索匹配
   const pinyinMap = useMemo(() => {
     const map = new Map<string, { namePinyin: string; descPinyin: string }>()
+    if (!pinyinModule) return map
+    const { pinyin } = pinyinModule
     for (const site of flatSites) {
       map.set(site.id, {
         namePinyin: pinyin(site.name, { toneType: "none", type: "array" }).join("").toLowerCase(),
@@ -78,7 +91,7 @@ export function SearchableLayout({
       })
     }
     return map
-  }, [flatSites])
+  }, [flatSites, pinyinModule])
 
   const filteredSites = useMemo(() => {
     if (!searchQuery.trim()) return []
@@ -112,6 +125,9 @@ export function SearchableLayout({
 
   return (
     <SiteDetailProvider>
+      {/* 全网格共享一个 TooltipProvider：SiteCard 每卡自包 Provider 在大网格下
+          会创建数百个 Radix Provider 树，挂载耗时与内存都不可观 */}
+      <TooltipProvider delayDuration={150}>
       <div className="min-h-screen flex flex-col">
       <ScrollHeader
         categories={allCategories}
@@ -185,6 +201,7 @@ export function SearchableLayout({
 
       {!overviewActive && <Footer />}
       </div>
+      </TooltipProvider>
     </SiteDetailProvider>
   )
 }

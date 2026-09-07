@@ -1,9 +1,15 @@
 "use client"
 
 import { createContext, useContext, useEffect, useState } from "react"
+import dynamic from "next/dynamic"
 import { fetchPublicSettings } from "@/lib/client-settings"
 import { pluginRegistry } from "./registry"
-import { MarkdownContent } from "@/components/markdown-content"
+// react-markdown 全家桶体积可观，仅上传插件的 markdown 槽位使用：
+// dynamic 拆出首屏 bundle，渲染 markdown 槽位时才加载
+const MarkdownContent = dynamic(
+  () => import("@/components/markdown-content").then(m => m.MarkdownContent),
+  { ssr: false }
+)
 import {
   Dialog,
   DialogContent,

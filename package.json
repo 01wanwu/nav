@@ -8,6 +8,8 @@
     "postbuild": "node scripts/open-next-postbuild.mjs",
     "start": "node --max-http-header-size=65536 node_modules/next/dist/bin/next start -p 3000",
     "lint": "next lint",
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "test": "tsx scripts/verify-bookmarks.ts && tsx scripts/verify-workspace.ts && tsx scripts/domain-verify-selftest.ts",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "postinstall": "node scripts/generate-prisma.mjs && node scripts/db-bootstrap.mjs",

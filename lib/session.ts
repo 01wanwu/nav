@@ -29,6 +29,18 @@ function getSessionSecret(): string {
     process.env.SESSION_SECRET?.trim() || process.env.NEXTAUTH_SECRET?.trim()
   if (configured) return configured
 
+  // 生产运行时 fail-closed：回退密钥经 env 内联进构建产物，公开镜像的下载者
+  // 可提取后伪造任意管理员会话。构建期（静态生成）放行，运行时强制显式配置。
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.NEXT_PHASE !== "phase-production-build"
+  ) {
+    throw new Error(
+      "[session] 生产环境必须配置 SESSION_SECRET（或 NEXTAUTH_SECRET），" +
+        "否则会话可被提取构建产物密钥的攻击者伪造。生成方式：openssl rand -base64 32"
+    )
+  }
+
   if (!secretWarned) {
     secretWarned = true
     console.warn(
@@ -46,11 +58,15 @@ interface SessionPayload {
   r: string
   /** 过期时间（Unix 秒） */
   e: number
+  /** 签发时间（Unix 秒）：供改密后吊销旧会话比对（旧版 token 无此字段） */
+  i?: number
 }
 
 export interface SessionInfo {
   userId: string
   role: string
+  /** 签发时间（Unix 秒）；旧版 token 无此字段时为 undefined */
+  iat?: number
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {
@@ -99,6 +115,7 @@ export async function createSessionToken(
     u: userId,
     r: role,
     e: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS,
+    i: Math.floor(Date.now() / 1000),
   }
   const encoder = new TextEncoder()
   const body = bytesToBase64Url(encoder.encode(JSON.stringify(payload)))
@@ -142,7 +159,11 @@ export async function verifySessionToken(
     }
     if (payload.e < Math.floor(Date.now() / 1000)) return null
 
-    return { userId: payload.u, role: payload.r }
+    return {
+      userId: payload.u,
+      role: payload.r,
+      iat: typeof payload.i === "number" ? payload.i : undefined,
+    }
   } catch {
     return null
   }

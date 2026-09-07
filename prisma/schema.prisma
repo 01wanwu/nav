@@ -129,6 +129,8 @@ model User {
   name      String?
   avatar    String?
   role      UserRole @default(ADMIN)
+  // 改密时间：会话校验时与 token 签发时间比对，改密后吊销所有旧会话（null=从未改密）
+  passwordChangedAt DateTime? @map("password_changed_at")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

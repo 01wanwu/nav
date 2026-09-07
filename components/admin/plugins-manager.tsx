@@ -1,6 +1,7 @@
 "use client"
 
-import { useRef, useState, useTransition } from "react"
+import { useEffect, useRef, useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
 import { useTranslations } from "next-intl"
 import { resolveActionError } from "@/lib/action-error"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -55,6 +56,13 @@ export function PluginsManager({ plugins }: { plugins: PluginView[] }) {
   const [deleting, setDeleting] = useState<PluginView | null>(null)
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const router = useRouter()
+
+  // router.refresh() 带回服务端最新插件列表后同步本地 items
+  // （useState 初值只在挂载时取 props，RSC 刷新不会自动写入 state）
+  useEffect(() => {
+    setItems(plugins)
+  }, [plugins])
 
   function handleToggle(plugin: PluginView, enabled: boolean) {
     startTransition(async () => {
@@ -113,8 +121,9 @@ export function PluginsManager({ plugins }: { plugins: PluginView[] }) {
       if (result.success && result.data?.id) {
         invalidateSettingsCache()
         toast.success(t("uploadSuccess"))
-        // 上传成功后整页刷新以载入合并视图新增的插件
-        window.location.reload()
+        // action 已 revalidatePath，refresh 拉回合并视图（含新插件）并经上方 effect 同步 items，
+        // 不再整页 window.location.reload()
+        router.refresh()
       } else {
         toast.error(resolveActionError(tAE, result.error, t("uploadFailed")), { duration: 8000 })
       }

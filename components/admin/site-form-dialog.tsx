@@ -381,6 +381,9 @@ export function SiteFormDialog({ open, onOpenChange, site, mode, onSuccess }: Si
         className={`flex max-h-[85vh] flex-col overflow-hidden ${
           enableSiteDetail ? "sm:max-w-[680px]" : "sm:max-w-[500px]"
         }`}
+        // 提交中阻止 Esc/点遮罩关闭：防止误关丢表单、请求结果丢失上下文
+        onEscapeKeyDown={(e) => loading && e.preventDefault()}
+        onInteractOutside={(e) => loading && e.preventDefault()}
       >
         <DialogHeader className="shrink-0">
           <DialogTitle>{mode === "create" ? t("createTitle") : t("editTitle")}</DialogTitle>

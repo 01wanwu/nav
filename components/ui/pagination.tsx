@@ -37,15 +37,18 @@ PaginationItem.displayName = "PaginationItem"
 type PaginationLinkProps = {
   isActive?: boolean
 } & Pick<ButtonProps, "size"> &
-  React.ComponentProps<"a">
+  React.ComponentProps<"button">
 
+// 本项目的分页均为 onClick 驱动（无 href 路由分页）：渲染为 button 而非 <a>，
+// <a> 无 href 不可 Tab 聚焦、键盘用户无法翻页
 const PaginationLink = ({
   className,
   isActive,
   size = "icon",
   ...props
 }: PaginationLinkProps) => (
-  <a
+  <button
+    type="button"
     aria-current={isActive ? "page" : undefined}
     className={cn(
       buttonVariants({

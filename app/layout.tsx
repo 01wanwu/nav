@@ -11,12 +11,14 @@ import { htmlLang } from "@/lib/i18n"
 import { AnimationSync } from "@/components/theme-provider/animation-sync"
 import { getAdminSession } from "@/lib/api-auth"
 import { AdminAuthProvider } from "@/components/auth/admin-auth-provider"
+// 请求级缓存版解析：metadata/body/子布局/页面重复取用同一份工作区与展示设置
+import { getCachedCurrentWorkspace, getCachedDisplaySettings } from "@/lib/workspace-render"
 
 const inter = Inter({ subsets: ["latin"] });
 
 export async function generateMetadata(): Promise<Metadata> {
   // 展示配置按当前请求的工作区覆盖（域名绑定 → 默认工作区）
-  const settings = await getDisplaySettings()
+  const settings = await getCachedDisplaySettings()
   const t = await getTranslations("metadata")
 
   return {
@@ -31,7 +33,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
 // 当前请求对应的工作区 slug，输出为 meta 标记；解析失败时无标记（探测侧按不可达处理）
 async function WorkspaceMarker() {
-  const workspace = await getCurrentWorkspace()
+  const workspace = await getCachedCurrentWorkspace()
   return <meta name="workspace" content={workspace.slug} />
 }
 
@@ -41,7 +43,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const locale = await getLocale()
-  const settings = await getDisplaySettings()
+  const settings = await getCachedDisplaySettings()
   const session = await getAdminSession()
   const initialIsAdmin = Boolean(session)
 

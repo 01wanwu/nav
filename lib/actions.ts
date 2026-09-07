@@ -5,6 +5,18 @@ import { revalidatePath } from "next/cache"
 import bcrypt from "bcryptjs"
 import { isLocale, type Locale } from "./i18n"
 import { getSystemSettingsRecord } from "./settings"
+import { z } from "zod"
+
+// 分页参数钳制：客户端可传任意值——pageSize=1e9 会全表拉取、负 page 产生负 skip
+// 直接抛 Prisma 错误。非法输入回退默认值，越界输入钳到安全范围。
+function clampPagination(page?: number, pageSize?: number, defaultPageSize = 10) {
+  const toInt = (v: unknown, fallback: number) =>
+    typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : fallback
+  return {
+    page: Math.max(1, toInt(page, 1)),
+    pageSize: Math.min(100, Math.max(1, toInt(pageSize, defaultPageSize))),
+  }
+}
 import { getAdminSession } from "./api-auth"
 import { verifyDomainHost } from "./domain-verify"
 import { isPluginEnabled, firePluginWebhook } from "./plugins/runtime"
@@ -589,8 +601,7 @@ export async function getCategoriesWithPagination(params: {
   const unauthorized = await requireAdmin()
   if (unauthorized) return unauthorized
   try {
-    const page = params.page || 1
-    const pageSize = params.pageSize || 10
+    const { page, pageSize } = clampPagination(params.page, params.pageSize)
     const skip = (page - 1) * pageSize
 
     // 后台按当前选中的工作区上下文过滤
@@ -840,18 +851,24 @@ export async function deleteCategory(id: string) {
     if (!(await isCategoryInCurrentWorkspace(id))) {
       return { success: false, error: "CATEGORY_NOT_IN_WORKSPACE" }
     }
-    // 级联删除会连带销毁分类下全部站点与访问记录，显式预检阻断而非静默清空
-    const siteCount = await prisma.site.count({ where: { categoryId: id } })
-    if (siteCount > 0) {
+    // 级联删除会连带销毁分类下全部站点与访问记录，显式预检阻断而非静默清空。
+    // 预检与删除必须在同一事务：分离写在并发下存在「预检时无站点、删除瞬间
+    // 新站点恰好创建并被级联清掉」的窗口
+    const result = await prisma.$transaction(async (tx) => {
+      const siteCount = await tx.site.count({ where: { categoryId: id } })
+      if (siteCount > 0) {
+        return { blocked: true as const, siteCount }
+      }
+      await tx.category.delete({ where: { id } })
+      return { blocked: false as const, siteCount: 0 }
+    })
+    if (result.blocked) {
       return {
         success: false,
         error: "CATEGORY_HAS_SITES",
-        data: { count: siteCount },
+        data: { count: result.siteCount },
       }
     }
-    await prisma.category.delete({
-      where: { id },
-    })
     revalidatePath("/admin/categories")
     revalidatePath("/")
     return { success: true }
@@ -910,8 +927,7 @@ export async function getSitesWithPagination(params: {
   const unauthorized = await requireAdmin()
   if (unauthorized) return unauthorized
   try {
-    const page = params.page || 1
-    const pageSize = params.pageSize || 10
+    const { page, pageSize } = clampPagination(params.page, params.pageSize)
     const skip = (page - 1) * pageSize
 
     // 后台按当前选中工作区过滤；显式传入的分类筛选与工作区取交集，
@@ -1163,6 +1179,11 @@ export async function getSiteDetail(siteId: string) {
     // 「禁用即收权」在数据源头收口：本函数位于 "use server" 文件，
     // 是公开可调用的 RPC 端点，仅在 API 路由层检查插件开关防不住直连调用
     if (!(await isPluginEnabled("site-detail"))) {
+      return { success: false, error: "Site not found" }
+    }
+    // 工作区隔离：detailContent 只对站点所属工作区可见，
+    // 与 searchSites/getSites 的公开读取口径一致
+    if (!(await isSiteInCurrentWorkspace(siteId))) {
       return { success: false, error: "Site not found" }
     }
     const site = await prisma.site.findUnique({
@@ -1770,8 +1791,7 @@ export async function getUsersWithPagination(params: {
   const unauthorized = await requireAdmin()
   if (unauthorized) return unauthorized
   try {
-    const page = params.page || 1
-    const pageSize = params.pageSize || 10
+    const { page, pageSize } = clampPagination(params.page, params.pageSize)
     const skip = (page - 1) * pageSize
 
     const where: Prisma.UserWhereInput = {}
@@ -1894,7 +1914,11 @@ export async function changePassword(
     }
     await prisma.user.update({
       where: { id: user.id },
-      data: { password: await bcrypt.hash(newPassword, 10) },
+      data: {
+        password: await bcrypt.hash(newPassword, 10),
+        // 记录改密时间：getAdminSession 会与 token 签发时间比对，吊销改密前签发的所有旧会话
+        passwordChangedAt: new Date(),
+      },
     })
     revalidatePath("/admin/users")
     return { success: true }
@@ -1933,10 +1957,22 @@ export async function searchSites(query: string) {
           },
         ],
       },
-      include: {
-        category: true,
-      },
       orderBy: { order: 'asc' },
+      // 显式投影：此 Action 可被客户端直接调用，整行返回会泄露
+      // submitterIp/submitterContact 并外带 detailContent 大字段，与 getSites 同口径
+      select: {
+        id: true,
+        name: true,
+        url: true,
+        description: true,
+        iconUrl: true,
+        categoryId: true,
+        isPublished: true,
+        isPinned: true,
+        hasDetail: true,
+        order: true,
+        category: { select: { name: true } },
+      },
     })
 
     return { success: true, data: sites }
@@ -2047,6 +2083,42 @@ const ALLOWED_SETTINGS_FIELDS = [
   "enableAnimations",
 ] as const
 
+// 系统设置值校验：白名单只过滤键不过滤值，类型/长度/范围必须在这里卡住
+// （API 路由与客户端直接 RPC 都经由此函数，一处校验两条路径全覆盖）
+const updateSystemSettingsSchema = z
+  .object({
+    siteName: z.string().max(100),
+    siteDescription: z.string().max(500),
+    // siteLogo/favicon 容许存量 data URL 形式（base64 可达数十 KB）；
+    // 仅管理员可写，上限只为拦截意外垃圾值
+    siteLogo: z.string().max(100000),
+    favicon: z.string().max(100000),
+    pageSize: z.number().int().min(1).max(100),
+    showFooter: z.boolean(),
+    footerCopyright: z.string().max(200),
+    footerLinks: z
+      .array(
+        z.object({
+          // name 允许空：设置页「添加链接」会先插入空行，历史数据也可能有空 name；
+          // 全空行由客户端在提交前过滤
+          name: z.string().max(100),
+          url: z.string().max(500),
+        })
+      )
+      .max(50),
+    showAdminLink: z.boolean(),
+    showIcp: z.boolean(),
+    icpNumber: z.string().max(100).nullable(),
+    icpLink: z.string().max(500).nullable(),
+    aboutContent: z.string().max(50000).nullable(),
+    githubUrl: z.string().max(500),
+    defaultLanguage: z.string().max(10),
+    customHeadCode: z.string().max(20000).nullable(),
+    customBodyCode: z.string().max(20000).nullable(),
+    enableAnimations: z.boolean(),
+  })
+  .partial()
+
 export async function updateSystemSettings(data: {
   siteName?: string
   siteDescription?: string
@@ -2071,11 +2143,22 @@ export async function updateSystemSettings(data: {
   if (unauthorized) return unauthorized
   try {
     // 白名单过滤：只保留已知字段，丢弃任何额外注入的键
-    const allowed = Object.fromEntries(
+    const whitelisted = Object.fromEntries(
       Object.entries(data).filter(([key]) =>
         (ALLOWED_SETTINGS_FIELDS as readonly string[]).includes(key)
       )
-    ) as Partial<typeof data>
+    ) as unknown
+
+    // 类型/长度/范围校验：pageSize: -1、siteName: {} 之类脏值不得直通 Prisma
+    const parsed = updateSystemSettingsSchema.safeParse(whitelisted)
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0]
+      return {
+        success: false,
+        error: `Invalid settings: ${issue.path.join(".")} ${issue.message}`,
+      }
+    }
+    const allowed = parsed.data as Partial<typeof data>
 
     // 校验默认语言取值
     if (allowed.defaultLanguage && !isLocale(allowed.defaultLanguage)) {
