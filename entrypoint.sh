@@ -45,13 +45,16 @@ if [ "$DB_MODE" = "postgres" ] && [ "$PG_URL_VALID" != "1" ]; then
   exit 1
 fi
 
-# seed 前置检查：无管理员账户时执行种子初始化（sqlite / postgres 共用）
+# seed 前置检查：无任何管理员账户时才执行种子初始化（sqlite / postgres 共用）
 seed_if_needed() {
   echo "🔍 检查数据库是否已初始化..."
+  # 必须同时覆盖 SUPER_ADMIN 与 ADMIN：引入两级角色后，存量账号被提升为超管
+  # 是大概率操作，若这里只查 ADMIN，会误判为「未初始化」而重跑 seed（往已有
+  # 数据的库里注入示例分类与站点）
   if node -e "
     const { PrismaClient } = require('./generated/prisma-${1}');
     const prisma = new PrismaClient();
-    prisma.user.findFirst({ where: { role: 'ADMIN' } })
+    prisma.user.findFirst({ where: { role: { in: ['ADMIN', 'SUPER_ADMIN'] } } })
       .then(user => {
         if (user) {
           console.log('✅ 数据库已初始化，跳过 seed');
@@ -88,6 +91,12 @@ if [ "$DB_MODE" = "sqlite" ]; then
   npx prisma db push --schema prisma/schema.sqlite.prisma --accept-data-loss --skip-generate
 
   seed_if_needed sqlite
+
+  # 升级补足：多管理员版本上线后，存量部署的账号全部仍是 ADMIN，
+  # 系统内没有超管（用户管理/审计日志不可用）。此处提升最早的管理员为超管。
+  # 失败不阻断启动——可事后按 docs/admin-permissions 的说明用 SQL 手动提升
+  node scripts/ensure-super-admin.mjs sqlite ||
+    echo "⚠️  超管补足检查未成功执行（不影响启动），必要时请按文档手动提升超管"
 
   echo "🚀 启动应用..."
   # --max-http-header-size：测活探测需要，避免 Google 等站点响应头超 undici 16KB 上限导致误判失效
@@ -227,6 +236,10 @@ else
 fi
 
 seed_if_needed postgres
+
+# 升级补足：同上（PostgreSQL 分支）
+node scripts/ensure-super-admin.mjs postgres ||
+  echo "⚠️  超管补足检查未成功执行（不影响启动），必要时请按文档手动提升超管"
 
 echo "🚀 启动应用..."
 # --max-http-header-size：测活探测需要，避免 Google 等站点响应头超 undici 16KB 上限导致误判失效

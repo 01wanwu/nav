@@ -13,6 +13,8 @@ import {
   Database,
   Layers,
   Puzzle,
+  Settings,
+  ScrollText,
 } from "lucide-react"
 import {
   Sidebar,
@@ -65,8 +67,23 @@ const navItems = [
   },
   {
     titleKey: "settings",
+    href: "/admin/settings",
+    icon: Settings,
+  },
+] as const
+
+// 仅超管可见的菜单项（用户管理/审计日志）。
+// 隐藏入口只是展示层控制，真正的权限校验在页面服务端与 Server Actions 内。
+const superAdminNavItems = [
+  {
+    titleKey: "users",
     href: "/admin/users",
     icon: Users,
+  },
+  {
+    titleKey: "audit",
+    href: "/admin/audit",
+    icon: ScrollText,
   },
 ] as const
 
@@ -75,6 +92,9 @@ export function AdminSidebar() {
   const t = useTranslations("admin.sidebar")
   const [siteName, setSiteName] = useState("Conan Nav")
   const [siteLogo, setSiteLogo] = useState<string | null>(null)
+  // 当前登录者是否超管：决定「用户管理/审计日志」入口是否展示。
+  // 与 /api/admin/me 同源获取，复用其缓存策略
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -86,6 +106,30 @@ export function AdminSidebar() {
       }
     }
     loadSettings()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // 获取当前登录者角色：决定「用户管理/审计日志」入口是否展示。
+  // AdminAvatar 也请求 /api/admin/me，浏览器层 HTTP 缓存不适用，
+  // 但同一渲染周期内两次请求成本可忽略
+  useEffect(() => {
+    let cancelled = false
+    async function loadRole() {
+      try {
+        const res = await fetch("/api/admin/me", { credentials: "include" })
+        if (res.ok) {
+          const data = await res.json()
+          if (!cancelled && data.user) {
+            setIsSuperAdmin(data.user.role === "SUPER_ADMIN")
+          }
+        }
+      } catch {
+        // 网络错误时保持默认隐藏，不影响其他菜单
+      }
+    }
+    loadRole()
     return () => {
       cancelled = true
     }
@@ -144,6 +188,21 @@ export function AdminSidebar() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+              {isSuperAdmin &&
+                superAdminNavItems.map((item) => (
+                  <SidebarMenuItem key={item.href}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={pathname === item.href}
+                      tooltip={t(item.titleKey)}
+                    >
+                      <Link href={item.href}>
+                        <item.icon />
+                        <span>{t(item.titleKey)}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

@@ -31,13 +31,15 @@
   - JSON格式：完整数据备份（包含描述、排序、发布状态等所有字段）
   - 全量备份：含工作区结构与域名绑定，用于整站迁移
   - Chrome书签：浏览器兼容格式（仅包含名称、URL和图标）
-- 👤 管理员系统 - 单管理员设计，侧边栏头像直接编辑
+- 👥 **多管理员与角色分级** - 超级管理员 / 管理员两级：超管可管理账号与查看审计日志，管理员负责内容维护，详见[管理员与权限体系](docs/admin-permissions.zh-CN.md)
 - ⚙️ 系统设置 - 网站名称、Logo、Favicon、GitHub链接、ICP备案等
 - 📈 访问追踪 - 可开启/关闭的网站访问统计
 - 🧩 **插件系统** - 内置收录、浏览器扩展等插件 + 用户上传声明式插件，详见[插件开发指南](docs/plugin-development.zh-CN.md)
+- 📜 **操作审计日志** - 记录登录与站点/分类/工作区/域名/插件/系统设置/管理员变更，保留 90 天，仅超管可见（支持搜索与多维筛选）
 
 ### 技术亮点
-- **单管理员架构** - 无需复杂的用户权限系统
+- **两级管理员权限** - 超级管理员 / 管理员分级，角色以数据库为准，降级与改密即时生效；权限判定收敛在 `lib/roles.ts`
+- **操作可追溯** - 关键管理操作写入审计日志，actor 冗余快照保留，管理员删除后仍可追溯
 - **动态配置** - 后台实时修改网站设置
 - **分页优化** - 所有列表页支持分页
 - **类型安全** - 完整的 TypeScript 类型定义，零 any 类型
@@ -257,15 +259,16 @@ docker compose down -v
 本项目使用 GitHub Actions 自动构建 Docker 镜像，推送到 GitHub Container Registry：
 
 - **镜像地址**: `ghcr.io/kenanlabs/nav:latest`
-- **触发条件**: Git tag 推送（格式：`v*.*.*`）
-- **构建结果**: 同时推送 `version` 和 `latest` 标签
+- **触发条件**: Git tag 推送（格式：`v*`）或 Actions 页面手动触发
+- **发布前校验**: 类型检查、i18n 一致性、测试，且 tag 必须与 `package.json` 版本一致
+- **构建结果**: 多架构镜像（amd64 + arm64，各自原生 runner 构建），推送 `version` / `major.minor` / `latest` 标签
 
 **发布新版本**：
 
 ```bash
-# 创建并推送 git tag（触发 GitHub Actions）
-git tag v1.0.0
-git push origin v1.0.0
+# npm version 会同时更新 package.json 版本号并创建 tag，二者不一致时 CI 会拒绝构建
+npm version patch   # 或 minor / major
+git push --follow-tags
 ```
 
 ### 方式二：使用 PM2 + Nginx
@@ -308,7 +311,7 @@ pm2 save
 | `NEXTAUTH_SECRET` | 加密密钥（兼作会话签名回退密钥） | 随机字符串（`openssl rand -base64 32`） | ❌（与 SESSION_SECRET 二选一；Docker 会生成兜底密钥） |
 | `NEXTAUTH_URL` | 应用完整 URL | `http://localhost:3000` 或 `https://your-domain.com` | ❌（Docker 有默认值） |
 | `POSTGRES_PASSWORD` | `postgres` compose profile 的 PostgreSQL 密码 | 随机长字符串 | ✅（仅 postgres profile） |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | 初始管理员账号（仅首次 seed 生效） | 邮箱 / 强口令 | ❌ |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | 初始管理员账号，角色为**超级管理员**（仅首次 seed 生效，已存在同名账号时不覆盖） | 邮箱 / 强口令 | ❌ |
 
 **Docker 部署**：配置 `SESSION_SECRET`（或 `NEXTAUTH_SECRET`）即可，数据库默认 SQLite 零配置；需要 PostgreSQL 时设置 `DB_PROVIDER=postgres` 与 `POSTGRES_PASSWORD` 并启用 postgres profile。
 
@@ -357,6 +360,22 @@ git pull && npm install && npm start
 # SQLite（默认）：如启动报字段缺失，先执行 npm run db:push 同步表结构
 # PostgreSQL：启动前执行 npm run db:migrate:deploy
 ```
+
+### 升级到多管理员版本（SUPER_ADMIN / ADMIN）
+
+升级会新增 `SUPER_ADMIN` 角色与 `AuditLog` 审计表。已有账号不会逐个改写，但**系统里至少要有一个超管**，
+否则「用户管理 / 审计日志」入口不可用——因此启动时会自动补足：**若不存在任何超管，就把最早创建的管理员提升为超管**
+（幂等、只升不降；也可手动执行 `npm run db:ensure-super-admin`）。
+
+想把超管换成别的账号时（先升新的、再降旧的，顺序不可颠倒）：
+
+```sql
+UPDATE "User" SET "role" = 'SUPER_ADMIN' WHERE "email" = 'new-owner@example.com';
+UPDATE "User" SET "role" = 'ADMIN'      WHERE "email" = 'old-owner@example.com';
+```
+
+最后重新登录一次。全新部署不受影响：seed 创建的初始账号就是超级管理员。
+完整说明见[管理员与权限体系](docs/admin-permissions.zh-CN.md#从单管理员版本升级)。
 
 
 ---
@@ -416,9 +435,22 @@ npm run db:push
 - ✅ **优先使用后台管理界面**进行所有数据操作
 - ✅ 避免直接操作数据库（批量导入请使用内置的数据导入工具）
 
-### 系统管理页面为什么没有用户管理？
+### 后台为什么看不到「用户管理 / 审计日志」？
 
-Conan Nav 采用**单管理员架构**，管理员信息的编辑已集成到侧边栏的头像组件中，设计更加简洁直观。
+这两个入口**仅超级管理员可见**。常见原因：
+
+1. 当前账号是普通管理员（`ADMIN`）——只能做内容维护，不能管理账号；
+2. 刚从旧版本升级——已有账号不会自动升级为超管，需手动执行一条 SQL，见
+   [升级到多管理员版本](#升级到多管理员版本super_admin--admin)；
+3. 登录后角色才被调整过——退出重新登录即可（角色以数据库为准，旧会话会即时失效）。
+
+自己的资料和密码在**侧边栏头像 → 编辑资料**中修改，所有角色都能用。
+角色模型与自我保护规则见[管理员与权限体系](docs/admin-permissions.zh-CN.md)。
+
+### 超级管理员的密码忘了怎么办？
+
+超管不可被删除，也不可被其他超管重置密码，只能直连数据库改密码哈希（重新 seed 不会覆盖已有账号）。
+步骤见[管理员与权限体系](docs/admin-permissions.zh-CN.md#超管密码遗失)。
 
 ### 如何备份数据库？
 

@@ -298,9 +298,10 @@ async function createDefaultAdmin() {
     create: {
       email,
       password: hashedPassword,
-      name: '管理员',
+      name: '超级管理员',
       avatar: null, // 默认无头像，用户可在后台设置
-      role: 'ADMIN',
+      // 种子账号固定为超管：环境变量由部署方掌控，是系统的信任锚点
+      role: 'SUPER_ADMIN',
     },
   })
   console.log(`  ✓ 创建管理员: ${email}${password ? '（口令来自 ADMIN_PASSWORD 环境变量）' : ' (密码: admin123)'}\n`)

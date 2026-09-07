@@ -4,6 +4,8 @@ import bcrypt from "bcryptjs"
 import { z } from "zod"
 import { jsonResponseWithSession } from "@/lib/auth-cookies"
 import { createSessionToken } from "@/lib/session"
+import { hasAdminRole } from "@/lib/roles"
+import { recordAuditLog } from "@/lib/audit-log"
 import {
   checkLoginRateLimit,
   recordLoginFailure,
@@ -75,8 +77,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 检查是否是管理员
-    if (user.role !== "ADMIN") {
+    // 检查是否是管理角色（SUPER_ADMIN / ADMIN）
+    if (!hasAdminRole(user.role)) {
       recordLoginFailure(clientIp, email)
       return NextResponse.json(
         { error: "无权限访问管理后台" },
@@ -85,6 +87,15 @@ export async function POST(request: NextRequest) {
     }
 
     recordLoginSuccess(email)
+
+    // 审计：登录成功事件（多管理员协作场景下可追溯账号使用情况）
+    await recordAuditLog({
+      actorId: user.id,
+      actorEmail: user.email,
+      action: "LOGIN",
+      entityType: "user",
+      entityId: user.id,
+    })
 
     // 创建 session：签发 HMAC 签名会话 token（双 Set-Cookie 策略：Lax 保底 + None/Secure 覆盖），
     // HTTP 与 HTTPS、直连与反向代理、iframe 预览环境均可用，详见 lib/auth-cookies.ts

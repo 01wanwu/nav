@@ -31,13 +31,15 @@ A clean and modern link navigation system built with Next.js 15, Prisma, and sha
   - JSON format: complete data backup (description, ordering, publish status, and all fields)
   - Full backup: includes workspace structures and domain bindings for site migration
   - Chrome bookmarks: browser-compatible format (name, URL, and icon only)
-- 👤 Admin System - single-admin design, edit profile from the sidebar avatar
+- 👥 **Multi-admin & role tiers** - super admin / admin: super admins manage accounts and read the audit log, admins handle content; see [Admin Roles & Permissions](docs/admin-permissions.md)
 - ⚙️ System Settings - site name, logo, favicon, GitHub link, ICP filing, etc.
 - 📈 Visit Tracking - optional site visit statistics
 - 🧩 **Plugin System** - builtin collection/browser-extension plugins plus user-uploaded declarative plugins; see the [Plugin Development Guide](docs/plugin-development.md)
+- 📜 **Audit log** - records sign-ins and site/category/workspace/domain/plugin/settings/admin changes, kept for 90 days, super admin only (searchable and filterable)
 
 ### Technical Highlights
-- **Single-admin architecture** - no complex user permission system needed
+- **Two-tier admin roles** - super admin / admin; the database is the source of truth, so demotion and password changes take effect immediately; all checks live in `lib/roles.ts`
+- **Traceable operations** - key admin actions are written to an audit log with a redundant actor snapshot that survives account deletion
 - **Dynamic configuration** - modify site settings in real time from the dashboard
 - **Pagination** - all list pages support pagination
 - **Type safety** - full TypeScript typings, zero `any`
@@ -256,15 +258,17 @@ docker compose down -v
 Docker images are built automatically by GitHub Actions and pushed to the GitHub Container Registry:
 
 - **Image**: `ghcr.io/kenanlabs/nav:latest`
-- **Trigger**: Git tag push (format: `v*.*.*`)
-- **Result**: pushes both `version` and `latest` tags
+- **Trigger**: Git tag push (format: `v*`) or a manual run from the Actions page
+- **Pre-release checks**: typecheck, i18n consistency, tests; the tag must match the `package.json` version
+- **Result**: multi-arch image (amd64 + arm64, each built on a native runner), pushing `version` / `major.minor` / `latest` tags
 
 **Publishing a new release**:
 
 ```bash
-# Create and push a git tag (triggers GitHub Actions)
-git tag v1.0.0
-git push origin v1.0.0
+# npm version bumps package.json and creates the tag together;
+# CI rejects builds where the two do not match
+npm version patch   # or minor / major
+git push --follow-tags
 ```
 
 ### Option 2: PM2 + Nginx
@@ -307,7 +311,7 @@ pm2 save
 | `NEXTAUTH_SECRET` | Encryption key (also used as session signing fallback) | random string (`openssl rand -base64 32`) | ❌ (one of the two; Docker generates a fallback) |
 | `NEXTAUTH_URL` | Full app URL | `http://localhost:3000` or `https://your-domain.com` | ❌ (Docker default) |
 | `POSTGRES_PASSWORD` | PostgreSQL password for the `postgres` compose profile | random long string | ✅ (postgres profile only) |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Initial admin account (first seed only) | email / strong password | ❌ |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Initial admin account, created as **super admin** (first seed only; an existing account with the same email is not overwritten) | email / strong password | ❌ |
 
 **Docker**: configure `SESSION_SECRET` (or `NEXTAUTH_SECRET`); SQLite is used by default with no database config. Add `DB_PROVIDER=postgres` + `POSTGRES_PASSWORD` to switch to the PostgreSQL profile.
 
@@ -356,6 +360,24 @@ git pull && npm install && npm start
 # SQLite (default): schema is synced on startup-equivalent via `npm run db:push` if needed
 # PostgreSQL: run `npm run db:migrate:deploy` before starting
 ```
+
+### Upgrading to the multi-admin version (SUPER_ADMIN / ADMIN)
+
+The upgrade adds the `SUPER_ADMIN` role and the `AuditLog` table. Existing accounts are not rewritten
+one by one, but the system needs **at least one super admin**, otherwise the "Users" / "Audit Log"
+entries are unusable — so startup fills the gap automatically: **if no super admin exists, the oldest
+admin account is promoted** (idempotent, promotion-only; you can also run
+`npm run db:ensure-super-admin` manually).
+
+To move the super admin role to another account (promote the new one first, then demote the old one):
+
+```sql
+UPDATE "User" SET "role" = 'SUPER_ADMIN' WHERE "email" = 'new-owner@example.com';
+UPDATE "User" SET "role" = 'ADMIN'      WHERE "email" = 'old-owner@example.com';
+```
+
+Finally, sign in again. Fresh installs are unaffected — the seeded account is always a super admin.
+Full details: [Admin Roles & Permissions](docs/admin-permissions.md#upgrading-from-the-single-admin-version).
 
 ---
 
@@ -414,9 +436,25 @@ npm run db:push
 - ✅ **Prefer the admin dashboard** for all data operations
 - ✅ Avoid direct database access (except bulk import via the built-in data tools)
 
-### Why is there no user management in the system settings page?
+### Why can't I see "Users" / "Audit Log" in the dashboard?
 
-Conan Nav uses a **single-admin architecture**. Admin profile editing is integrated into the sidebar avatar component, which is simpler and more intuitive.
+Both entries are **super admin only**. Typical reasons:
+
+1. Your account is a regular admin (`ADMIN`) — it can maintain content but not manage accounts.
+2. You just upgraded from an older version — existing accounts are not promoted automatically;
+   run one SQL statement as described in
+   [Upgrading to the multi-admin version](#upgrading-to-the-multi-admin-version-super_admin--admin).
+3. Your role was changed after you signed in — sign out and back in (the database is the source of
+   truth, so the old session stops working immediately).
+
+Your own profile and password are always editable via **sidebar avatar → edit profile**.
+See [Admin Roles & Permissions](docs/admin-permissions.md) for the role model and self-protection rules.
+
+### I forgot the super admin password
+
+A super admin cannot be deleted and its password cannot be reset by another super admin, so recovery
+means updating the hash directly (re-seeding does not overwrite existing accounts).
+Steps: [Admin Roles & Permissions](docs/admin-permissions.md#lost-super-admin-password).
 
 ### How do I back up the database?
 

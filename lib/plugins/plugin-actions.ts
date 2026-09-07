@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma"
 import { revalidatePath } from "next/cache"
 import { getAdminSession } from "@/lib/api-auth"
+import { recordAuditLog } from "@/lib/audit-log"
 import { pluginRegistry } from "./registry"
 import { validatePluginManifest } from "./manifest-schema"
 import { resolveConfig } from "./runtime"
@@ -15,6 +16,24 @@ async function requireAdmin(): Promise<{ success: false; error: string } | null>
     return { success: false, error: "Unauthorized" }
   }
   return null
+}
+
+// 插件管理操作的审计旁路：身份取当前会话，记录失败不阻塞业务
+async function auditPluginAction(
+  action: "CREATE" | "UPDATE" | "DELETE",
+  pluginId: string,
+  detail: string
+): Promise<void> {
+  const actor = await getAdminSession()
+  if (!actor) return
+  await recordAuditLog({
+    actorId: actor.userId,
+    actorEmail: actor.email || "",
+    action,
+    entityType: "plugin",
+    entityId: pluginId,
+    detail,
+  })
 }
 
 function parseStringArray(raw: unknown): string[] {
@@ -60,6 +79,11 @@ export async function setPluginEnabled(id: string, enabled: boolean) {
     revalidatePath("/", "layout")
     revalidatePath("/about")
     revalidatePath("/admin/plugins")
+    await auditPluginAction(
+      "UPDATE",
+      id,
+      `${enabled ? "启用" : "停用"}插件 ${id}`
+    )
     return { success: true }
   } catch (error) {
     console.error("Error setting plugin enabled:", error)
@@ -126,6 +150,7 @@ export async function updatePluginConfig(
 
     revalidatePath("/admin/plugins")
     revalidatePath("/", "layout")
+    await auditPluginAction("UPDATE", id, `更新插件 ${id} 的配置`)
     return { success: true }
   } catch (error) {
     console.error("Error updating plugin config:", error)
@@ -161,6 +186,11 @@ export async function uploadPluginManifest(raw: string) {
 
     revalidatePath("/admin/plugins")
     revalidatePath("/", "layout")
+    await auditPluginAction(
+      "CREATE",
+      result.manifest.id,
+      `上传插件 ${result.manifest.id}（${result.manifest.name}）`
+    )
     return { success: true, data: { id: result.manifest.id } }
   } catch (error) {
     console.error("Error uploading plugin manifest:", error)
@@ -183,5 +213,6 @@ export async function deleteUploadedPlugin(id: string) {
 
   revalidatePath("/admin/plugins")
   revalidatePath("/", "layout")
+  await auditPluginAction("DELETE", id, `删除插件 ${id}`)
   return { success: true }
 }

@@ -18,6 +18,8 @@ function clampPagination(page?: number, pageSize?: number, defaultPageSize = 10)
   }
 }
 import { getAdminSession } from "./api-auth"
+import { isSuperAdminRole } from "./roles"
+import { recordAuditLog, maybePruneAuditLogs, type AuditActionType } from "./audit-log"
 import { verifyDomainHost } from "./domain-verify"
 import { isPluginEnabled, firePluginWebhook } from "./plugins/runtime"
 import {
@@ -42,6 +44,27 @@ async function requireAdmin(): Promise<{ success: false; error: string } | null>
     return { success: false, error: "Unauthorized" }
   }
   return null
+}
+
+// 内容类管理操作的审计旁路：操作者身份取当前会话（requireAdmin 已保证存在，
+// 防御式跳过），记录失败不阻塞业务。login 与用户管理两个调用点各自内联，
+// 因为它们的 actor 上下文不同（登录无会话 / 超管闸门已持有会话）。
+async function writeAuditLog(
+  action: Exclude<AuditActionType, "LOGIN">,
+  entityType: string,
+  entityId: string | undefined,
+  detail: string
+): Promise<void> {
+  const actor = await getAdminSession()
+  if (!actor) return
+  await recordAuditLog({
+    actorId: actor.userId,
+    actorEmail: actor.email || "",
+    action,
+    entityType,
+    entityId,
+    detail,
+  })
 }
 
 // 站点 URL 协议白名单：仅允许 http/https，
@@ -250,6 +273,12 @@ export async function createWorkspace(data: {
     })
     revalidatePath("/", "layout")
     revalidatePath("/admin/workspaces")
+    await writeAuditLog(
+      "CREATE",
+      "workspace",
+      workspace.id,
+      `创建工作区「${workspace.name}」(${workspace.slug})`
+    )
     return { success: true, data: workspace }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -304,6 +333,12 @@ export async function updateWorkspace(id: string, data: {
     })
     revalidatePath("/", "layout")
     revalidatePath("/admin/workspaces")
+    await writeAuditLog(
+      "UPDATE",
+      "workspace",
+      workspace.id,
+      `编辑工作区「${workspace.name}」(${workspace.slug})`
+    )
     return { success: true, data: workspace }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -335,6 +370,12 @@ export async function deleteWorkspace(id: string) {
     })
     revalidatePath("/", "layout")
     revalidatePath("/admin/workspaces")
+    await writeAuditLog(
+      "DELETE",
+      "workspace",
+      id,
+      `删除工作区「${workspace.name}」(${workspace.slug})`
+    )
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -365,6 +406,12 @@ export async function setPrimaryWorkspace(id: string) {
     })
     revalidatePath("/", "layout")
     revalidatePath("/admin/workspaces")
+    await writeAuditLog(
+      "UPDATE",
+      "workspace",
+      id,
+      `将「${workspace.name}」设为默认工作区`
+    )
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -399,7 +446,7 @@ export async function addWorkspaceDomain(workspaceId: string, rawHost: string) {
     // 目标工作区必须存在：内存模式无外键约束，否则会创建指向不存在工作区的孤儿域名
     const targetWorkspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
-      select: { id: true },
+      select: { id: true, name: true },
     })
     if (!targetWorkspace) {
       return { success: false, error: "WORKSPACE_NOT_FOUND" }
@@ -410,6 +457,12 @@ export async function addWorkspaceDomain(workspaceId: string, rawHost: string) {
     })
     revalidatePath("/", "layout")
     revalidatePath("/admin/workspaces")
+    await writeAuditLog(
+      "CREATE",
+      "domain",
+      domain.id,
+      `为工作区「${targetWorkspace.name}」绑定域名 ${host}`
+    )
     return { success: true, data: domain }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -422,9 +475,11 @@ export async function removeWorkspaceDomain(domainId: string) {
   const unauthorized = await requireAdmin()
   if (unauthorized) return unauthorized
   try {
-    await prisma.domain.delete({ where: { id: domainId } })
+    // delete 返回被删行：借它拿到 host 供审计日志使用，无需额外查询
+    const domain = await prisma.domain.delete({ where: { id: domainId } })
     revalidatePath("/", "layout")
     revalidatePath("/admin/workspaces")
+    await writeAuditLog("DELETE", "domain", domainId, `解绑域名 ${domain.host}`)
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -693,6 +748,12 @@ export async function createCategory(data: {
     })
     revalidatePath("/admin/categories")
     revalidatePath("/")
+    await writeAuditLog(
+      "CREATE",
+      "category",
+      category.id,
+      `创建分类「${category.name}」(${category.slug})`
+    )
     return { success: true, data: category }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -747,6 +808,12 @@ export async function updateCategory(id: string, data: {
       revalidatePath(`/category/${existing.slug}`)
     }
     revalidatePath(`/category/${category.slug}`)
+    await writeAuditLog(
+      "UPDATE",
+      "category",
+      category.id,
+      `编辑分类「${category.name}」(${category.slug})`
+    )
     return { success: true, data: category }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -773,6 +840,14 @@ export async function updateCategoriesOrder(items: { id: string; order: number }
     })
     revalidatePath("/admin/categories")
     revalidatePath("/")
+    if (validItems.length > 0) {
+      await writeAuditLog(
+        "UPDATE",
+        "category",
+        undefined,
+        `调整分类排序（${validItems.length} 个分类）`
+      )
+    }
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -836,6 +911,14 @@ export async function updateSitesOrder(categoryId: string, orderedIds: string[])
     })
     revalidatePath("/admin/sites")
     revalidatePath("/")
+    if (finalOrder.length > 0) {
+      await writeAuditLog(
+        "UPDATE",
+        "site",
+        undefined,
+        `调整站点排序（${finalOrder.length} 个站点）`
+      )
+    }
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -859,8 +942,9 @@ export async function deleteCategory(id: string) {
       if (siteCount > 0) {
         return { blocked: true as const, siteCount }
       }
-      await tx.category.delete({ where: { id } })
-      return { blocked: false as const, siteCount: 0 }
+      // delete 返回被删行：借它拿到名称供审计日志使用
+      const deleted = await tx.category.delete({ where: { id } })
+      return { blocked: false as const, siteCount: 0, name: deleted.name }
     })
     if (result.blocked) {
       return {
@@ -871,6 +955,7 @@ export async function deleteCategory(id: string) {
     }
     revalidatePath("/admin/categories")
     revalidatePath("/")
+    await writeAuditLog("DELETE", "category", id, `删除分类「${result.name}」`)
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -1292,6 +1377,8 @@ export async function createSite(data: {
     if (!isSafeSiteUrl(data.url)) {
       return { success: false, error: "SITE_URL_INVALID_PROTOCOL" }
     }
+    // 记录操作者身份供审计日志使用（requireAdmin 已校验会话有效）
+    const auditActor = await getAdminSession()
     const detailContent = normalizeDetailContent(data.detailContent)
     // 新建场景不存在「已有截图」，带 keepId 的条目（无 url/data）一律剔除，
     // 防止恶意构造的 keepId 绕过校验后落库为 NULL 字段脏行
@@ -1336,6 +1423,17 @@ export async function createSite(data: {
     revalidatePath("/admin/sites")
     revalidatePath("/")
     revalidatePath(`/category/${site.category?.slug || ''}`)
+
+    if (auditActor) {
+      await recordAuditLog({
+        actorId: auditActor.userId,
+        actorEmail: auditActor.email || "",
+        action: "CREATE",
+        entityType: "site",
+        entityId: site.id,
+        detail: `创建站点「${site.name}」(${site.url})`,
+      })
+    }
 
     // 事件总线：以发布状态创建时通知订阅插件
     if (site.isPublished) {
@@ -1508,6 +1606,12 @@ export async function updateSite(id: string, data: {
       })
     }
 
+    await writeAuditLog(
+      "UPDATE",
+      "site",
+      site.id,
+      `编辑站点「${site.name}」(${site.url})`
+    )
     return { success: true, data: site }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -1533,6 +1637,12 @@ export async function toggleSitePin(id: string) {
     revalidatePath("/admin/sites")
     revalidatePath("/")
     revalidatePath(`/category/${updated.category?.slug || ''}`)
+    await writeAuditLog(
+      "UPDATE",
+      "site",
+      updated.id,
+      `${updated.isPinned ? "置顶" : "取消置顶"}站点「${updated.name}」`
+    )
     return { success: true, data: updated }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -1557,6 +1667,18 @@ export async function deleteSite(id: string) {
     revalidatePath("/admin/sites")
     revalidatePath("/")
     revalidatePath(`/category/${site.category?.slug || ''}`)
+
+    const auditActor = await getAdminSession()
+    if (auditActor) {
+      await recordAuditLog({
+        actorId: auditActor.userId,
+        actorEmail: auditActor.email || "",
+        action: "DELETE",
+        entityType: "site",
+        entityId: site.id,
+        detail: `删除站点「${site.name}」(${site.url})`,
+      })
+    }
 
     // 事件总线：删除站点时通知订阅插件
     await firePluginWebhook("siteDeleted", {
@@ -1609,6 +1731,12 @@ export async function toggleSitePublish(id: string) {
       description: site.description,
     })
 
+    await writeAuditLog(
+      "UPDATE",
+      "site",
+      site.id,
+      `${site.isPublished ? "发布" : "下架"}站点「${site.name}」`
+    )
     return { success: true, data: site }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -1782,65 +1910,25 @@ export async function getSiteIdsForHealthCheck() {
 }
 
 // ==================== Users ====================
+//
+// 多管理员权限模型（见 lib/roles.ts）：
+//   SUPER_ADMIN：可管理用户（新增/编辑/删除/重置密码/调整角色）与查看审计日志
+//   ADMIN：仅内容维护，不可触及其他账号
+// 自我保护规则：
+//   - 仅超管可执行用户管理操作（requireSuperAdmin）
+//   - 超管不可被删除/降级，也不可被其他超管重置密码
+//     （重置密码等同接管账号，与删除/降级同属一个信任边界）
+//   - 操作者不能删除/降级自己（防误操作把最后一个超管锁在门外）
 
-export async function getUsersWithPagination(params: {
-  page?: number
-  pageSize?: number
-  search?: string
-}) {
-  const unauthorized = await requireAdmin()
-  if (unauthorized) return unauthorized
-  try {
-    const { page, pageSize } = clampPagination(params.page, params.pageSize)
-    const skip = (page - 1) * pageSize
+// 注：管理员列表不再有「任意管理员可读」的版本。曾经的
+// getUsersWithPagination 以 requireAdmin 即可枚举全部管理员邮箱与角色，
+// 与新权限模型（ADMIN 不可触及其他账号）冲突且已无调用方，故移除；
+// 需要列表一律走仅超管可用的 getManagedUsers。
 
-    const where: Prisma.UserWhereInput = {}
-
-    if (params.search) {
-      where.OR = [
-        { email: ciContains(params.search) },
-        { name: ciContains(params.search) },
-      ]
-    }
-
-    const [users, total] = await Promise.all([
-      prisma.user.findMany({
-        where,
-        skip,
-        take: pageSize,
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          role: true,
-          createdAt: true,
-        },
-      }),
-      prisma.user.count({ where }),
-    ])
-
-    return {
-      success: true,
-      data: users,
-      pagination: {
-        page,
-        pageSize,
-        total,
-        totalPages: Math.ceil(total / pageSize),
-      },
-    }
-  } catch (error) {
-    if (isNextDynamicError(error)) throw error
-    console.error("Error fetching users with pagination:", error)
-    return { success: false, error: "Failed to fetch users" }
-  }
-}
-
-
-// 修改资料（邮箱/姓名/头像）。密码修改不走此通道，
-// 一律经由 changePassword 强制校验旧密码，且身份以会话为准，
-// 不再信任客户端传入的 userId
+// 修改本人资料（邮箱/姓名/头像）。密码修改不走此通道，
+// 一律经由 changePassword 强制校验旧密码。
+// 目标账号只认会话身份：Server Action 是公开可构造调用的 RPC，
+// 若信任客户端传入的 id，普通管理员即可改写他人（含超管）的邮箱
 export async function updateUser(
   id: string,
   data: {
@@ -1849,8 +1937,11 @@ export async function updateUser(
     avatar?: string
   }
 ) {
-  const unauthorized = await requireAdmin()
-  if (unauthorized) return unauthorized
+  const session = await getAdminSession()
+  if (!session) return { success: false, error: "Unauthorized" }
+  if (id !== session.userId) {
+    return { success: false, error: "FORBIDDEN_NOT_SELF" }
+  }
   try {
     type UserUpdateData = {
       email?: string
@@ -1868,7 +1959,7 @@ export async function updateUser(
       where: { id },
       data: updateData,
     })
-    revalidatePath("/admin/users")
+    revalidatePath("/admin/settings")
     // 只回传安全字段，避免 password 哈希随响应外泄（内存模式下
     // update 不支持 select，故在应用层投影）
     return {
@@ -1884,6 +1975,396 @@ export async function updateUser(
     if (isNextDynamicError(error)) throw error
     console.error("Error updating user:", error)
     return { success: false, error: "Failed to update user" }
+  }
+}
+
+// ---------- 用户管理（仅超管） ----------
+
+// 用户管理操作统一闸门：仅 SUPER_ADMIN 可执行。
+// 通过时一并返回操作者会话供审计日志署名——不用模块级变量透传，
+// 避免并发请求间相互覆盖（Server Action 天然并发，共享可变状态在此处不安全）
+type SuperAdminGate =
+  | {
+      ok: true
+      session: NonNullable<Awaited<ReturnType<typeof getAdminSession>>>
+    }
+  | { ok: false; error: string }
+
+async function requireSuperAdmin(): Promise<SuperAdminGate> {
+  const session = await getAdminSession()
+  if (!session) {
+    return { ok: false, error: "Unauthorized" }
+  }
+  if (!isSuperAdminRole(session.role)) {
+    return { ok: false, error: "FORBIDDEN_NOT_SUPER_ADMIN" }
+  }
+  return { ok: true, session }
+}
+
+// 自我保护核心规则：目标账号是否可被操作者删除/降级。
+// 返回错误码字符串（可翻译），null 表示允许。
+async function checkTargetMutatable(
+  actor: { userId: string; role: string },
+  targetId: string
+): Promise<string | null> {
+  if (targetId === actor.userId) {
+    // 不能对自己执行删除/降级：避免误操作把唯一超管锁在门外
+    return "CANNOT_MODIFY_SELF"
+  }
+  const target = await prisma.user.findUnique({
+    where: { id: targetId },
+    select: { role: true },
+  })
+  if (!target) return "USER_NOT_FOUND"
+  // 超管账号不可被任何人删除/降级（含其他超管）：系统信任锚点，
+  // 降权只能由超管本人在「个人资料」中自愿进行或直接操作数据库
+  if (isSuperAdminRole(target.role)) return "CANNOT_MODIFY_SUPER_ADMIN"
+  return null
+}
+
+// 用户列表（仅超管）：含角色字段，供管理页展示
+export async function getManagedUsers(params: {
+  page?: number
+  pageSize?: number
+  search?: string
+}) {
+  const gate = await requireSuperAdmin()
+  if (!gate.ok) return { success: false as const, error: gate.error }
+  const actor = gate.session
+  try {
+    const { page, pageSize } = clampPagination(params.page, params.pageSize, 20)
+    const skip = (page - 1) * pageSize
+
+    const where: Prisma.UserWhereInput = {}
+    if (params.search) {
+      where.OR = [
+        { email: ciContains(params.search) },
+        { name: ciContains(params.search) },
+      ]
+    }
+
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        skip,
+        take: pageSize,
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          createdAt: true,
+        },
+      }),
+      prisma.user.count({ where }),
+    ])
+
+    return {
+      success: true as const,
+      actorId: actor.userId,
+      data: users,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+    }
+  } catch (error) {
+    if (isNextDynamicError(error)) throw error
+    console.error("Error fetching managed users:", error)
+    return { success: false as const, error: "Failed to fetch users" }
+  }
+}
+
+// 新增管理员（仅超管）：邮箱唯一，初始密码由超管设置，目标立即生效
+export async function createManagedUser(data: {
+  email: string
+  password: string
+  name?: string | null
+  role?: string
+}) {
+  const gate = await requireSuperAdmin()
+  if (!gate.ok) return { success: false as const, error: gate.error }
+  const actor = gate.session
+  try {
+    const email = typeof data.email === "string" ? data.email.trim().toLowerCase() : ""
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return { success: false as const, error: "INVALID_EMAIL" }
+    }
+    if (typeof data.password !== "string" || data.password.length < 6) {
+      return { success: false as const, error: "PASSWORD_TOO_SHORT" }
+    }
+    // 普通超管只能创建 ADMIN；创建 SUPER_ADMIN 仅允许超管自己（当前实现只有超管能进此入口，故直接允许，
+    // 但默认值保持 ADMIN，避免误建过多超管破坏「超管不可删」约束的信任边界）
+    const role: "SUPER_ADMIN" | "ADMIN" =
+      data.role === "SUPER_ADMIN" ? "SUPER_ADMIN" : "ADMIN"
+
+    const exists = await prisma.user.findUnique({ where: { email } })
+    if (exists) {
+      return { success: false as const, error: "EMAIL_ALREADY_EXISTS" }
+    }
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        password: await bcrypt.hash(data.password, 10),
+        name: data.name || null,
+        role,
+      },
+      select: { id: true, email: true, name: true, role: true },
+    })
+
+    await recordAuditLog({
+      actorId: actor.userId,
+      actorEmail: actor.email || "",
+      action: "CREATE",
+      entityType: "user",
+      entityId: user.id,
+      detail: `创建管理员 ${user.email}（角色 ${role}）`,
+    })
+    revalidatePath("/admin/users")
+    return { success: true as const, data: user }
+  } catch (error) {
+    if (isNextDynamicError(error)) throw error
+    console.error("Error creating user:", error)
+    return { success: false as const, error: "Failed to create user" }
+  }
+}
+
+// 编辑管理员基本信息与角色（仅超管）。角色调整遵循自我保护规则；
+// 邮箱/姓名修改不触碰密码（密码走重置通道）。
+export async function updateManagedUser(
+  id: string,
+  data: {
+    email?: string
+    name?: string | null
+    role?: string
+  }
+) {
+  const gate = await requireSuperAdmin()
+  if (!gate.ok) return { success: false as const, error: gate.error }
+  const actor = gate.session
+  try {
+    const target = await prisma.user.findUnique({
+      where: { id },
+      select: { id: true, email: true, role: true },
+    })
+    if (!target) return { success: false as const, error: "USER_NOT_FOUND" }
+
+    const updateData: {
+      email?: string
+      name?: string | null
+      role?: "SUPER_ADMIN" | "ADMIN"
+    } = {}
+
+    if (typeof data.email === "string") {
+      const email = data.email.trim().toLowerCase()
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return { success: false as const, error: "INVALID_EMAIL" }
+      }
+      const conflict = await prisma.user.findUnique({ where: { email } })
+      if (conflict && conflict.id !== id) {
+        return { success: false as const, error: "EMAIL_ALREADY_EXISTS" }
+      }
+      updateData.email = email
+    }
+    if (data.name !== undefined) updateData.name = data.name || null
+
+    let roleChanged = false
+    if (data.role !== undefined && data.role !== target.role) {
+      const role: "SUPER_ADMIN" | "ADMIN" =
+        data.role === "SUPER_ADMIN" ? "SUPER_ADMIN" : "ADMIN"
+      // 角色变更同样受自我保护规则约束：不能降级自己/其他超管
+      const guard = await checkTargetMutatable(actor, id)
+      if (guard) return { success: false as const, error: guard }
+      updateData.role = role
+      roleChanged = true
+    }
+
+    const user = await prisma.user.update({
+      where: { id },
+      data: updateData,
+      select: { id: true, email: true, name: true, role: true },
+    })
+
+    await recordAuditLog({
+      actorId: actor.userId,
+      actorEmail: actor.email || "",
+      action: "UPDATE",
+      entityType: "user",
+      entityId: id,
+      detail: roleChanged
+        ? `编辑管理员 ${user.email}（角色变更为 ${user.role}）`
+        : `编辑管理员 ${user.email}`,
+    })
+    revalidatePath("/admin/users")
+    return { success: true as const, data: user }
+  } catch (error) {
+    if (isNextDynamicError(error)) throw error
+    console.error("Error updating managed user:", error)
+    return { success: false as const, error: "Failed to update user" }
+  }
+}
+
+// 重置管理员密码（仅超管）：超管设置新密码，无需旧密码；
+// 写 passwordChangedAt 吊销该账号所有旧会话（被盗账号立即踢下线）
+export async function resetManagedUserPassword(id: string, newPassword: string) {
+  const gate = await requireSuperAdmin()
+  if (!gate.ok) return { success: false as const, error: gate.error }
+  const actor = gate.session
+  try {
+    if (typeof newPassword !== "string" || newPassword.length < 6) {
+      return { success: false as const, error: "PASSWORD_TOO_SHORT" }
+    }
+    const target = await prisma.user.findUnique({
+      where: { id },
+      select: { id: true, email: true, role: true },
+    })
+    if (!target) return { success: false as const, error: "USER_NOT_FOUND" }
+    // 重置密码即等于接管该账号，与「超管不可删除/降级」属于同一信任边界：
+    // 不能重置其他超管的密码（重置自己等价于改密，允许）
+    if (isSuperAdminRole(target.role) && target.id !== actor.userId) {
+      return { success: false as const, error: "CANNOT_MODIFY_SUPER_ADMIN" }
+    }
+
+    await prisma.user.update({
+      where: { id },
+      data: {
+        password: await bcrypt.hash(newPassword, 10),
+        passwordChangedAt: new Date(),
+      },
+    })
+
+    await recordAuditLog({
+      actorId: actor.userId,
+      actorEmail: actor.email || "",
+      action: "UPDATE",
+      entityType: "user",
+      entityId: id,
+      detail: `重置 ${target.email} 的密码`,
+    })
+    revalidatePath("/admin/users")
+    return { success: true as const }
+  } catch (error) {
+    if (isNextDynamicError(error)) throw error
+    console.error("Error resetting user password:", error)
+    return { success: false as const, error: "Failed to reset password" }
+  }
+}
+
+// 删除管理员（仅超管）：超管账号不可删除，操作者不能删除自己；
+// 删除后其旧会话因查库失败自动失效
+export async function deleteManagedUser(id: string) {
+  const gate = await requireSuperAdmin()
+  if (!gate.ok) return { success: false as const, error: gate.error }
+  const actor = gate.session
+  try {
+    const guard = await checkTargetMutatable(actor, id)
+    if (guard) return { success: false as const, error: guard }
+
+    const target = await prisma.user.findUnique({
+      where: { id },
+      select: { email: true },
+    })
+    if (!target) return { success: false as const, error: "USER_NOT_FOUND" }
+
+    await prisma.user.delete({ where: { id } })
+
+    await recordAuditLog({
+      actorId: actor.userId,
+      actorEmail: actor.email || "",
+      action: "DELETE",
+      entityType: "user",
+      entityId: id,
+      detail: `删除管理员 ${target.email}`,
+    })
+    revalidatePath("/admin/users")
+    return { success: true as const }
+  } catch (error) {
+    if (isNextDynamicError(error)) throw error
+    console.error("Error deleting user:", error)
+    return { success: false as const, error: "Failed to delete user" }
+  }
+}
+
+// 审计日志分页查询（仅超管）。支持按操作类型 / 对象类型筛选与关键字搜索
+// （命中操作者邮箱、详情文本或对象 ID）。查询前顺带执行保留期清理（内部节流）。
+const AUDIT_LOG_ENTITY_TYPES = [
+  "user",
+  "site",
+  "category",
+  "workspace",
+  "domain",
+  "plugin",
+  "settings",
+] as const
+
+export async function getAuditLogs(params: {
+  page?: number
+  pageSize?: number
+  action?: string
+  entityType?: string
+  search?: string
+}) {
+  const gate = await requireSuperAdmin()
+  if (!gate.ok) return { success: false as const, error: gate.error }
+  try {
+    // 90 天保留期：惰性清理（函数内部每小时最多执行一次）
+    await maybePruneAuditLogs()
+
+    const { page, pageSize } = clampPagination(params.page, params.pageSize, 20)
+    const skip = (page - 1) * pageSize
+
+    const where: Prisma.AuditLogWhereInput = {}
+    if (
+      params.action &&
+      ["CREATE", "UPDATE", "DELETE", "LOGIN"].includes(params.action)
+    ) {
+      where.action = params.action as Prisma.EnumAuditActionFilter["equals"]
+    }
+    if (
+      params.entityType &&
+      (AUDIT_LOG_ENTITY_TYPES as readonly string[]).includes(params.entityType)
+    ) {
+      where.entityType = params.entityType
+    }
+    if (params.search) {
+      const keyword = params.search.trim()
+      if (keyword) {
+        where.OR = [
+          { actorEmail: ciContains(keyword) },
+          { detail: ciContains(keyword) },
+          { entityId: ciContains(keyword) },
+        ]
+      }
+    }
+
+    const [logs, total] = await Promise.all([
+      prisma.auditLog.findMany({
+        where,
+        skip,
+        take: pageSize,
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.auditLog.count({ where }),
+    ])
+
+    return {
+      success: true as const,
+      data: logs,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+    }
+  } catch (error) {
+    if (isNextDynamicError(error)) throw error
+    console.error("Error fetching audit logs:", error)
+    return { success: false as const, error: "Failed to fetch audit logs" }
   }
 }
 
@@ -1920,7 +2401,16 @@ export async function changePassword(
         passwordChangedAt: new Date(),
       },
     })
-    revalidatePath("/admin/users")
+    // 审计：本人改密（多管理员场景下可区分「本人改密」与「被超管重置」）
+    await recordAuditLog({
+      actorId: session.userId,
+      actorEmail: session.email || "",
+      action: "UPDATE",
+      entityType: "user",
+      entityId: user.id,
+      detail: `${user.email} 修改了自己的密码`,
+    })
+    revalidatePath("/admin/settings")
     return { success: true }
   } catch (error) {
     if (isNextDynamicError(error)) throw error
@@ -2196,10 +2686,11 @@ export async function updateSystemSettings(data: {
       })
     }
 
-    revalidatePath("/admin/users")
+    revalidatePath("/admin/settings")
     revalidatePath("/")
     revalidatePath("/about")
     revalidatePath("/admin/dashboard")
+    await writeAuditLog("UPDATE", "settings", settings.id, "更新系统设置")
 
     return { success: true, data: settings }
   } catch (error) {
@@ -2635,6 +3126,13 @@ export async function importData(
     revalidatePath('/category/[slug]', 'page')
 
     const skippedNote = skippedSites > 0 ? `，已跳过 ${skippedSites} 条非法或重复URL记录` : ''
+    await writeAuditLog(
+      "CREATE",
+      "site",
+      undefined,
+      `${mode === 'overwrite' ? '覆盖导入' : '追加导入'} ${importCategories.length} 个分类的数据` +
+        (skippedSites > 0 ? `，跳过 ${skippedSites} 条` : '')
+    )
     return {
       success: true,
       message: (mode === 'overwrite'
@@ -2799,6 +3297,13 @@ async function importFullBackup(
 
   const domainNote = skippedDomains > 0 ? `，跳过 ${skippedDomains} 个冲突域名` : ''
   const siteNote = skippedSites > 0 ? `，跳过 ${skippedSites} 条非法或重复站点` : ''
+  await writeAuditLog(
+    "CREATE",
+    "site",
+    undefined,
+    `导入全量备份（${mode === 'overwrite' ? '覆盖' : '追加'}模式，${importedWorkspaces} 个工作区）` +
+      (skippedDomains + skippedSites > 0 ? `，跳过 ${skippedDomains + skippedSites} 条` : '')
+  )
   return {
     success: true,
     message: `全量备份导入完成：${importedWorkspaces} 个工作区${domainNote}${siteNote}`,
@@ -2952,6 +3457,13 @@ export async function importBookmarks(
     revalidatePath('/category/[slug]', 'page')
 
     const bookmarkSkippedNote = skippedSites > 0 ? `，已跳过 ${skippedSites} 条非法URL记录` : ''
+    await writeAuditLog(
+      "CREATE",
+      "site",
+      undefined,
+      `${mode === 'overwrite' ? '覆盖导入' : '追加导入'}浏览器书签（${importedCategories} 个分类）` +
+        (skippedSites > 0 ? `，跳过 ${skippedSites} 条` : '')
+    )
     return {
       success: true,
       message: (mode === 'overwrite'

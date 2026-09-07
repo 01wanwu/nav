@@ -12,15 +12,28 @@ import { WorkspaceSwitcher } from "./workspace-switcher"
 import { cn } from "@/lib/utils"
 
 // 路径到标题 key 的映射（文案位于 admin.sidebar 命名空间）
-type PageTitleKey = "dashboard" | "sites" | "categories" | "workspaces" | "data" | "settings" | "plugins"
+type PageTitleKey =
+  | "dashboard"
+  | "sites"
+  | "categories"
+  | "workspaces"
+  | "data"
+  | "settings"
+  | "plugins"
+  | "users"
+  | "audit"
 
+// 路由语义：/admin/users 是超管的用户管理，/admin/settings 是系统设置，
+// 两者不可混用（一度沿用旧映射把用户管理页标题显示成「系统设置」）
 const pageTitleKeyMap: Record<string, PageTitleKey> = {
   "/admin/dashboard": "dashboard",
   "/admin/sites": "sites",
   "/admin/categories": "categories",
   "/admin/workspaces": "workspaces",
   "/admin/data": "data",
-  "/admin/users": "settings",
+  "/admin/settings": "settings",
+  "/admin/users": "users",
+  "/admin/audit": "audit",
   "/admin/plugins": "plugins",
 }
 
