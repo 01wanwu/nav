@@ -257,7 +257,7 @@ docker compose down -v
 
 Docker images are built automatically by GitHub Actions and pushed to the GitHub Container Registry:
 
-- **Image**: `ghcr.io/kenanlabs/nav:latest`
+- **Image**: `ghcr.io/bestzwei/nav-dev:latest`
 - **Trigger**: Git tag push (format: `v*`) or a manual run from the Actions page
 - **Pre-release checks**: typecheck, i18n consistency, tests; the tag must match the `package.json` version
 - **Result**: multi-arch image (amd64 + arm64, each built on a native runner), pushing `version` / `major.minor` / `latest` tags

@@ -1,7 +1,8 @@
 services:
   # Next.js 应用（默认 SQLite 模式：零外部依赖，数据持久化在 nav-data 卷）
   nav:
-    image: ghcr.io/kenanlabs/nav:latest
+    # 本仓库 CI（.github/workflows/docker-publish.yml）按仓库名构建的镜像
+    image: ghcr.io/bestzwei/nav-dev:latest
     container_name: nav
     restart: unless-stopped
     ports:
