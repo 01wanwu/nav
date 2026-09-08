@@ -98,6 +98,12 @@ if [ "$DB_MODE" = "sqlite" ]; then
   node scripts/ensure-super-admin.mjs sqlite ||
     echo "⚠️  超管补足检查未成功执行（不影响启动），必要时请按文档手动提升超管"
 
+  # 初始账号对齐：ADMIN_EMAIL/ADMIN_PASSWORD 仅首次初始化时由 seed 读取，
+  # 部署方事后才设置时库里没有对应账号（按环境变量登录会 401 且难自查）。
+  # 此处确保该账号存在（已存在则不覆盖密码）。失败不阻断启动
+  node scripts/ensure-env-admin.mjs sqlite ||
+    echo "⚠️  初始账号对齐检查未成功执行（不影响启动）"
+
   echo "🚀 启动应用..."
   # --max-http-header-size：测活探测需要，避免 Google 等站点响应头超 undici 16KB 上限导致误判失效
   exec node --max-http-header-size=65536 server.js
@@ -240,6 +246,10 @@ seed_if_needed postgres
 # 升级补足：同上（PostgreSQL 分支）
 node scripts/ensure-super-admin.mjs postgres ||
   echo "⚠️  超管补足检查未成功执行（不影响启动），必要时请按文档手动提升超管"
+
+# 初始账号对齐：同上（PostgreSQL 分支）
+node scripts/ensure-env-admin.mjs postgres ||
+  echo "⚠️  初始账号对齐检查未成功执行（不影响启动）"
 
 echo "🚀 启动应用..."
 # --max-http-header-size：测活探测需要，避免 Google 等站点响应头超 undici 16KB 上限导致误判失效

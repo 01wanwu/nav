@@ -1,6 +1,6 @@
 {
   "name": "conan-nav",
-  "version": "0.7.1",
+  "version": "0.7.6",
   "private": true,
   "scripts": {
     "dev": "node --max-http-header-size=65536 node_modules/next/dist/bin/next dev -p 3000 -H 0.0.0.0",
@@ -10,7 +10,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "check:i18n": "node scripts/check-i18n.mjs",
-    "test": "tsx scripts/verify-bookmarks.ts && tsx scripts/verify-workspace.ts && tsx scripts/domain-verify-selftest.ts",
+    "test": "tsx scripts/verify-bookmarks.ts && tsx scripts/verify-workspace.ts && tsx scripts/domain-verify-selftest.ts && tsx scripts/verify-rate-limit.ts",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "postinstall": "node scripts/generate-prisma.mjs && node scripts/db-bootstrap.mjs",

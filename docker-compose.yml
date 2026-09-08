@@ -1,7 +1,8 @@
 services:
   # Next.js 应用（默认 SQLite 模式：零外部依赖，数据持久化在 nav-data 卷）
   nav:
-    image: ghcr.io/kenanlabs/nav:latest
+    # 本仓库 CI（.github/workflows/docker-publish.yml）按仓库名构建的镜像
+    image: ghcr.io/bestzwei/nav-dev:latest
     container_name: nav
     restart: unless-stopped
     ports:
@@ -22,6 +23,8 @@ services:
       # 不注入容器环境，必须显式透传才能被容器内的 seed 脚本读到
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # JSON 导入文件大小上限（MB），默认 10；大数据量备份导入可放宽，如 MAX_IMPORT_MB=200
+      MAX_IMPORT_MB: ${MAX_IMPORT_MB:-10}
       NODE_ENV: production
     volumes:
       # SQLite 数据库持久化：默认模式下全部业务数据都在这里

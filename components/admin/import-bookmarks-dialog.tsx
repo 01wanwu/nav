@@ -276,6 +276,15 @@ export function ImportBookmarksDialog({
                 </div>
               </AlertDescription>
             </Alert>
+            {/* 大数据量导入提示：分批写入耗时不短，明确告知用户不要中途关闭 */}
+            {isImporting && (
+              <Alert className="border-amber-500/50 bg-amber-500/10">
+                <Loader2 className="h-4 w-4 animate-spin text-amber-600 dark:text-amber-400" />
+                <AlertDescription className="text-sm text-amber-700 dark:text-amber-400">
+                  {t("largeImportTip")}
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
 
           <DialogFooter>

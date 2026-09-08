@@ -5,10 +5,14 @@ import { clearSessionCookies } from "@/lib/auth-cookies"
 
 export async function GET() {
   try {
-    // 签名会话校验：伪造/过期/非 ADMIN 的 cookie 在此被拒绝
+    // 签名会话校验：伪造/过期/查库失败（用户已删除、角色已变更、改密吊销）的
+    // cookie 在此被拒绝。401 时顺带清掉无效会话 cookie——帮助持有「签名有效但
+    // 已查库失败」残留会话的客户端自愈：下次导航时 middleware 即按未认证处理，
+    // 正常重定向到登录页，而不是反复 401
     const session = await getAdminSession()
     if (!session) {
-      return NextResponse.json({ user: null }, { status: 401 })
+      const response = NextResponse.json({ user: null }, { status: 401 })
+      return clearSessionCookies(response)
     }
 
     const user = await prisma.user.findUnique({

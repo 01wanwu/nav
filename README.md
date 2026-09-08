@@ -257,7 +257,7 @@ docker compose down -v
 
 Docker images are built automatically by GitHub Actions and pushed to the GitHub Container Registry:
 
-- **Image**: `ghcr.io/kenanlabs/nav:latest`
+- **Image**: `ghcr.io/bestzwei/nav-dev:latest`
 - **Trigger**: Git tag push (format: `v*`) or a manual run from the Actions page
 - **Pre-release checks**: typecheck, i18n consistency, tests; the tag must match the `package.json` version
 - **Result**: multi-arch image (amd64 + arm64, each built on a native runner), pushing `version` / `major.minor` / `latest` tags
@@ -311,7 +311,10 @@ pm2 save
 | `NEXTAUTH_SECRET` | Encryption key (also used as session signing fallback) | random string (`openssl rand -base64 32`) | ❌ (one of the two; Docker generates a fallback) |
 | `NEXTAUTH_URL` | Full app URL | `http://localhost:3000` or `https://your-domain.com` | ❌ (Docker default) |
 | `POSTGRES_PASSWORD` | PostgreSQL password for the `postgres` compose profile | random long string | ✅ (postgres profile only) |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Initial admin account, created as **super admin** (first seed only; an existing account with the same email is not overwritten) | email / strong password | ❌ |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Initial super admin account: created by the first-run seed; **also honored on existing instances** — at startup, if the email does not exist yet, the account is created as super admin from `ADMIN_PASSWORD` (an existing account with that email keeps its in-database password) | email / strong password | ❌ |
+| `LOGIN_RATE_LIMIT_DISABLED` | Disable login rate limiting entirely (trusted/internal networks) | `true` | ❌ |
+| `LOGIN_RATE_LIMIT_ACCOUNT_MAX` / `_IP_MAX` | Login failure thresholds: per account / per IP (defaults 10 / 30 within a 15-minute window) | number | ❌ |
+| `LOGIN_RATE_LIMIT_LOCK_SECONDS` | Lock duration once triggered (default 300 seconds, fixed — no escalating backoff) | number | ❌ |
 
 **Docker**: configure `SESSION_SECRET` (or `NEXTAUTH_SECRET`); SQLite is used by default with no database config. Add `DB_PROVIDER=postgres` + `POSTGRES_PASSWORD` to switch to the PostgreSQL profile.
 

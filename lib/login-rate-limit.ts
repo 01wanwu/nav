@@ -1,30 +1,49 @@
 // 登录接口速率限制（暴力破解防护）
 //
-// 双维度固定窗口计数器，进程内存实现：
-// - IP 维度：单 IP 失败 10 次/15 分钟 → 锁定（挡扫号）
-// - 账号维度：单账号失败 5 次/15 分钟 → 锁定（定向爆破防护）
+// 自托管优先的产品取舍：这是部署在用户自己服务器上的个人导航站，
+// 限流的目的是拖慢爆破，而不是把站长锁在门外。因此：
+// - 阈值宽松（账号 10 次 / IP 30 次 / 15 分钟窗口）
+// - 锁定时长固定（默认 5 分钟），不做递增退避——误锁自己的代价远大于
+//   对爆破者多锁几小时的边际收益
+// - 全部参数可经环境变量调整，也可整体关闭
+// - 单实例内存实现即可；多实例再换 Redis
 //
-// 锁定退避：15min → 30min → 45min → 60min（封顶）。
-// 轮次在"锁定到期后紧接着又失败"时递增；静默超过冷却期（1 小时）后归零。
-// 登录成功即清零账号计数。重启进程计数清空（可接受：窗口仅 15 分钟）。
-// 单实例部署下内存方案已足够；如未来多实例，可换 Redis 等共享存储。
+// 可用环境变量：
+//   LOGIN_RATE_LIMIT_DISABLED=true            整体关闭（内网/可信环境）
+//   LOGIN_RATE_LIMIT_ACCOUNT_MAX=10           同账号失败上限
+//   LOGIN_RATE_LIMIT_IP_MAX=30                同 IP 失败上限
+//   LOGIN_RATE_LIMIT_WINDOW_MINUTES=15        计数窗口（分钟）
+//   LOGIN_RATE_LIMIT_LOCK_SECONDS=300         锁定时长（秒）
+//
+// 登录成功清零账号维度计数；重启进程计数清空。
 
 const WINDOW_MS = 15 * 60 * 1000
 const COOLDOWN_MS = 60 * 60 * 1000
-const MAX_FAILURES_PER_IP = 10
-const MAX_FAILURES_PER_ACCOUNT = 5
-const MAX_LOCK_MULTIPLE = 4
+
+function intEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim()
+  if (!raw) return fallback
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+export const loginRateLimitConfig = {
+  disabled: process.env.LOGIN_RATE_LIMIT_DISABLED?.trim().toLowerCase() === "true",
+  accountMax: intEnv("LOGIN_RATE_LIMIT_ACCOUNT_MAX", 10),
+  ipMax: intEnv("LOGIN_RATE_LIMIT_IP_MAX", 30),
+  windowMs: intEnv("LOGIN_RATE_LIMIT_WINDOW_MINUTES", 15) * 60 * 1000,
+  lockMs: intEnv("LOGIN_RATE_LIMIT_LOCK_SECONDS", 300) * 1000,
+}
+
+function now(): number {
+  return Date.now()
+}
 
 type AttemptRecord = {
   failures: number
   windowStart: number
   lockedUntil?: number
-  consecutiveLocks: number
   lastEventAt: number
-}
-
-function now(): number {
-  return Date.now()
 }
 
 const ipAttempts = new Map<string, AttemptRecord>()
@@ -43,43 +62,24 @@ function evictIfNeeded(map: Map<string, AttemptRecord>) {
 }
 
 function getRecord(map: Map<string, AttemptRecord>, key: string): AttemptRecord {
-  let record = map.get(key)
-  if (!record) {
-    record = {
-      failures: 0,
-      windowStart: now(),
-      consecutiveLocks: 0,
-      lastEventAt: now(),
+  const existing = map.get(key)
+  if (existing) {
+    // 计数窗口过期：重置计数（锁定状态保留，由 isLocked 判定）
+    if (now() - existing.windowStart >= loginRateLimitConfig.windowMs) {
+      existing.failures = 0
+      existing.windowStart = now()
+      delete existing.lockedUntil
     }
-    map.set(key, record)
-    return record
+    existing.lastEventAt = now()
+    return existing
   }
-
-  // 锁定中：保留状态
-  if (record.lockedUntil && record.lockedUntil > now()) {
-    record.lastEventAt = now()
-    return record
+  const fresh: AttemptRecord = {
+    failures: 0,
+    windowStart: now(),
+    lastEventAt: now(),
   }
-
-  // 冷却期已过：完全重置（含退避轮次，给正常用户干净的重新开始）
-  if (now() - record.lastEventAt > COOLDOWN_MS) {
-    record.failures = 0
-    record.windowStart = now()
-    record.consecutiveLocks = 0
-    delete record.lockedUntil
-    record.lastEventAt = now()
-    return record
-  }
-
-  // 计数窗口过期（但冷却期内）：重置计数、保留退避轮次——
-  // 锁定到期后立刻又来失败的攻击者应吃到更长的下一轮锁定
-  if (now() - record.windowStart >= WINDOW_MS) {
-    record.failures = 0
-    record.windowStart = now()
-    delete record.lockedUntil
-  }
-  record.lastEventAt = now()
-  return record
+  map.set(key, fresh)
+  return fresh
 }
 
 function isLocked(record: AttemptRecord): boolean {
@@ -95,24 +95,24 @@ function lockIfNeeded(
   map: Map<string, AttemptRecord>,
   key: string,
   maxFailures: number
-): number | null {
+): boolean {
   const record = getRecord(map, key)
   record.failures += 1
   if (record.failures >= maxFailures) {
-    record.consecutiveLocks = Math.min(record.consecutiveLocks + 1, MAX_LOCK_MULTIPLE)
-    const duration = Math.min(WINDOW_MS * record.consecutiveLocks, 60 * 60 * 1000)
-    record.lockedUntil = now() + duration
+    record.lockedUntil = now() + loginRateLimitConfig.lockMs
     record.failures = 0
     record.windowStart = now()
-    return Math.ceil(duration / 1000)
+    return true
   }
-  return null
+  return false
 }
 
 /**
  * 登录前检查：IP 或账号任一命中锁定则拒绝
  */
 export function checkLoginRateLimit(ip: string, email: string): LoginRateLimitResult {
+  if (loginRateLimitConfig.disabled) return { allowed: true }
+
   evictIfNeeded(ipAttempts)
   evictIfNeeded(accountAttempts)
 
@@ -133,12 +133,16 @@ export function checkLoginRateLimit(ip: string, email: string): LoginRateLimitRe
 }
 
 /**
- * 登录失败后记录：任一维度达阈值即进入锁定，返回锁定时长（秒）
+ * 登录失败后记录：任一维度达阈值即进入锁定
  */
-export function recordLoginFailure(ip: string, email: string): number | null {
-  const ipLock = lockIfNeeded(ipAttempts, ip, MAX_FAILURES_PER_IP)
-  const accountLock = lockIfNeeded(accountAttempts, email.toLowerCase(), MAX_FAILURES_PER_ACCOUNT)
-  return accountLock ?? ipLock
+export function recordLoginFailure(ip: string, email: string): void {
+  if (loginRateLimitConfig.disabled) return
+
+  evictIfNeeded(ipAttempts)
+  evictIfNeeded(accountAttempts)
+
+  lockIfNeeded(ipAttempts, ip, loginRateLimitConfig.ipMax)
+  lockIfNeeded(accountAttempts, email.toLowerCase(), loginRateLimitConfig.accountMax)
 }
 
 /**
@@ -154,7 +158,7 @@ export function resetRateLimitStateForTest(): void {
   accountAttempts.clear()
 }
 
-/** 仅供测试：时间旅行（模拟锁定到期/冷却期流逝） */
+/** 仅供测试：时间旅行（模拟锁定到期/窗口流逝） */
 export function __timeTravel(ms: number): void {
   const shift = (record: AttemptRecord) => {
     record.windowStart -= ms

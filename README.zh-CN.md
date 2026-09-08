@@ -258,7 +258,7 @@ docker compose down -v
 
 本项目使用 GitHub Actions 自动构建 Docker 镜像，推送到 GitHub Container Registry：
 
-- **镜像地址**: `ghcr.io/kenanlabs/nav:latest`
+- **镜像地址**: `ghcr.io/bestzwei/nav-dev:latest`
 - **触发条件**: Git tag 推送（格式：`v*`）或 Actions 页面手动触发
 - **发布前校验**: 类型检查、i18n 一致性、测试，且 tag 必须与 `package.json` 版本一致
 - **构建结果**: 多架构镜像（amd64 + arm64，各自原生 runner 构建），推送 `version` / `major.minor` / `latest` 标签
@@ -311,7 +311,10 @@ pm2 save
 | `NEXTAUTH_SECRET` | 加密密钥（兼作会话签名回退密钥） | 随机字符串（`openssl rand -base64 32`） | ❌（与 SESSION_SECRET 二选一；Docker 会生成兜底密钥） |
 | `NEXTAUTH_URL` | 应用完整 URL | `http://localhost:3000` 或 `https://your-domain.com` | ❌（Docker 有默认值） |
 | `POSTGRES_PASSWORD` | `postgres` compose profile 的 PostgreSQL 密码 | 随机长字符串 | ✅（仅 postgres profile） |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | 初始管理员账号，角色为**超级管理员**（仅首次 seed 生效，已存在同名账号时不覆盖） | 邮箱 / 强口令 | ❌ |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | 初始超级管理员账号：首次初始化（seed）时创建；**已运行的实例**上后补设置也有效——启动时若该邮箱不存在会按 `ADMIN_PASSWORD` 自动创建为超管（该邮箱已存在则不覆盖库内密码） | 邮箱 / 强口令 | ❌ |
+| `LOGIN_RATE_LIMIT_DISABLED` | 整体关闭登录限流（内网/可信环境） | `true` | ❌ |
+| `LOGIN_RATE_LIMIT_ACCOUNT_MAX` / `_IP_MAX` | 登录失败阈值：同账号 / 同 IP（默认 10 次 / 30 次，15 分钟窗口） | 数字 | ❌ |
+| `LOGIN_RATE_LIMIT_LOCK_SECONDS` | 触发锁定时长（默认 300 秒，固定时长无递增退避） | 数字 | ❌ |
 
 **Docker 部署**：配置 `SESSION_SECRET`（或 `NEXTAUTH_SECRET`）即可，数据库默认 SQLite 零配置；需要 PostgreSQL 时设置 `DB_PROVIDER=postgres` 与 `POSTGRES_PASSWORD` 并启用 postgres profile。
 

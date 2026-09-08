@@ -418,6 +418,7 @@
       "chromeFormatTitle": "Signets Chrome",
       "chromeFormatDesc": "Format de signets de Chrome et autres navigateurs, contenant seulement noms, URL et icônes. Les dossiers imbriqués (ex. /Cloud/Cloudflare) sont scindés en catégories distinctes.",
       "importing": "Importation...",
+      "largeImportTip": "Les importations volumineuses peuvent prendre 1 à 3 minutes. Ne fermez pas cette page.",
       "importBtn": "Importer",
       "fileFormatError": "Format de fichier invalide",
       "fileFormatErrorDesc": "Veuillez sélectionner une sauvegarde JSON ou un fichier de signets Chrome (.html/.htm)",
