@@ -2980,8 +2980,13 @@ function normalizeImportCategories(
 
 // 批量写入一个分类下的站点（含截图）。append 模式按 url 去重：
 // 跳过库内已存在与本批次已写入的 url，避免重复导入产生成倍冗余。
+// 每 IMPORT_SITE_BATCH_SIZE 条独立事务提交：大文件导入不再受单个事务
+// 30s 超时限制，中途失败时已提交批次保留，未写入部分随错误上抛中止。
+// 无截图站点走 createMany 批量插入（吞吐高一个数量级）；带截图站点
+// 需要先拿到 site id，仍逐条建站后在同事务内批量写截图。
+const IMPORT_SITE_BATCH_SIZE = 500
+
 async function importCategorySites(
-  tx: any,
   categoryId: string,
   sites: NormalizedImportSite[],
   mode: 'overwrite' | 'append',
@@ -2989,46 +2994,73 @@ async function importCategorySites(
 ) {
   const existingUrls = new Set<string>()
   if (mode === 'append') {
-    const existingSites = await tx.site.findMany({
+    const existingSites = await prisma.site.findMany({
       where: { categoryId },
       select: { url: true },
     })
     for (const s of existingSites) existingUrls.add(s.url)
   }
 
-  for (const siteData of sites) {
-    if (existingUrls.has(siteData.url)) {
-      onSkipped()
-      continue
+  for (let start = 0; start < sites.length; start += IMPORT_SITE_BATCH_SIZE) {
+    // 批内 url 去重（含与库内已有 url 比对），顺带累计跳过数
+    const batch: NormalizedImportSite[] = []
+    for (const siteData of sites.slice(start, start + IMPORT_SITE_BATCH_SIZE)) {
+      if (existingUrls.has(siteData.url)) {
+        onSkipped()
+        continue
+      }
+      existingUrls.add(siteData.url)
+      batch.push(siteData)
     }
-    existingUrls.add(siteData.url)
+    if (batch.length === 0) continue
 
-    const createdSite = await tx.site.create({
-      data: {
-        name: siteData.name,
-        url: siteData.url,
-        description: siteData.description,
-        iconUrl: siteData.iconUrl,
-        categoryId,
-        order: siteData.order,
-        isPublished: siteData.isPublished,
-        isPinned: siteData.isPinned,
-        detailContent: siteData.detailContent,
-        hasDetail: computeHasDetail(siteData.detailContent, siteData.screenshots.length),
-      },
-    })
-    if (siteData.screenshots.length > 0) {
-      await tx.screenshot.createMany({
-        data: siteData.screenshots.map((shot, index) => ({
-          siteId: createdSite.id,
-          source: shot.source,
-          url: shot.source === 'URL' ? shot.url || null : null,
-          data: shot.source === 'UPLOAD' ? shot.data || null : null,
-          mimeType: shot.source === 'UPLOAD' ? shot.mimeType || null : null,
-          order: shot.order !== undefined ? shot.order : index,
-        })),
-      })
-    }
+    const withScreenshots = batch.filter((s) => s.screenshots.length > 0)
+    const plainSites = batch.filter((s) => s.screenshots.length === 0)
+
+    await prisma.$transaction(async (tx: any) => {
+      if (plainSites.length > 0) {
+        await tx.site.createMany({
+          data: plainSites.map((siteData: NormalizedImportSite) => ({
+            name: siteData.name,
+            url: siteData.url,
+            description: siteData.description,
+            iconUrl: siteData.iconUrl,
+            categoryId,
+            order: siteData.order,
+            isPublished: siteData.isPublished,
+            isPinned: siteData.isPinned,
+            detailContent: siteData.detailContent,
+            hasDetail: computeHasDetail(siteData.detailContent, 0),
+          })),
+        })
+      }
+      for (const siteData of withScreenshots) {
+        const createdSite = await tx.site.create({
+          data: {
+            name: siteData.name,
+            url: siteData.url,
+            description: siteData.description,
+            iconUrl: siteData.iconUrl,
+            categoryId,
+            order: siteData.order,
+            isPublished: siteData.isPublished,
+            isPinned: siteData.isPinned,
+            detailContent: siteData.detailContent,
+            hasDetail: computeHasDetail(siteData.detailContent, siteData.screenshots.length),
+          },
+        })
+        await tx.screenshot.createMany({
+          data: siteData.screenshots.map((shot, index) => ({
+            siteId: createdSite.id,
+            source: shot.source,
+            url: shot.source === 'URL' ? shot.url || null : null,
+            data: shot.source === 'UPLOAD' ? shot.data || null : null,
+            mimeType: shot.source === 'UPLOAD' ? shot.mimeType || null : null,
+            order: shot.order !== undefined ? shot.order : index,
+          })),
+        })
+      }
+    }, { timeout: 30_000, maxWait: 10_000 })
   }
 }
 
@@ -3066,10 +3098,10 @@ export async function importData(
 
     const workspace = await getAdminWorkspace()
 
-    // 事务化：overwrite 的"清空 + 重写"同成败，脏数据不再造成不可逆丢失
-    await prisma.$transaction(async (tx: any) => {
-      // 覆盖模式：仅清空当前工作区的分类与网址（不影响其他工作区）
-      if (mode === 'overwrite') {
+    // 覆盖模式：清空当前工作区单独一个短事务（不影响其他工作区），
+    // 后续站点按批提交——单一大事务对大文件必然撞 30s 超时并整体回滚
+    if (mode === 'overwrite') {
+      await prisma.$transaction(async (tx: any) => {
         const workspaceCategoryIds = await getWorkspaceCategoryIds(workspace.id)
         if (workspaceCategoryIds.length > 0) {
           await tx.site.deleteMany({
@@ -3079,47 +3111,47 @@ export async function importData(
             where: { workspaceId: workspace.id },
           })
         }
-      }
+      }, { timeout: 60_000, maxWait: 10_000 })
+    }
 
-      // 追加模式：获取当前工作区最大排序值
-      let currentMaxOrder = 0
+    // 追加模式：获取当前工作区最大排序值
+    let currentMaxOrder = 0
+    if (mode === 'append') {
+      const maxOrderCategory = await prisma.category.findFirst({
+        where: { workspaceId: workspace.id },
+        orderBy: { order: 'desc' },
+        select: { order: true },
+      })
+      currentMaxOrder = maxOrderCategory?.order || 0
+    }
+
+    // 导入分类和网站（站点在 importCategorySites 内按批独立事务写入）
+    for (const categoryData of importCategories) {
+      // 检查分类是否已存在（追加模式，限定当前工作区）
+      let category: any = null
       if (mode === 'append') {
-        const maxOrderCategory = await tx.category.findFirst({
-          where: { workspaceId: workspace.id },
-          orderBy: { order: 'desc' },
-          select: { order: true },
-        })
-        currentMaxOrder = maxOrderCategory?.order || 0
-      }
-
-      // 导入分类和网站
-      for (const categoryData of importCategories) {
-        // 检查分类是否已存在（追加模式，限定当前工作区）
-        let category
-        if (mode === 'append') {
-          category = await tx.category.findFirst({
-            where: { slug: categoryData.slug, workspaceId: workspace.id },
-          })
-        }
-
-        if (!category) {
-          currentMaxOrder++
-          category = await tx.category.create({
-            data: {
-              name: categoryData.name,
-              slug: categoryData.slug,
-              icon: categoryData.icon,
-              order: categoryData.order !== undefined ? categoryData.order : currentMaxOrder,
-              workspaceId: workspace.id,
-            },
-          })
-        }
-
-        await importCategorySites(tx, category.id, categoryData.sites, mode, () => {
-          skippedSites++
+        category = await prisma.category.findFirst({
+          where: { slug: categoryData.slug, workspaceId: workspace.id },
         })
       }
-    }, { timeout: 30_000, maxWait: 10_000 })
+
+      if (!category) {
+        currentMaxOrder++
+        category = await prisma.category.create({
+          data: {
+            name: categoryData.name,
+            slug: categoryData.slug,
+            icon: categoryData.icon,
+            order: categoryData.order !== undefined ? categoryData.order : currentMaxOrder,
+            workspaceId: workspace.id,
+          },
+        })
+      }
+
+      await importCategorySites(category.id, categoryData.sites, mode, () => {
+        skippedSites++
+      })
+    }
 
     // 重新验证缓存
     revalidatePath('/', 'layout')
@@ -3168,9 +3200,9 @@ async function importFullBackup(
       return { success: false, error: "IMPORT_WORKSPACE_VALIDATION_FAILED" }
     }
 
-    // 每个工作区整体一个事务：元数据 upsert、域名绑定、清空与内容写入同成败。
-    // 之前元数据/域名在事务外，内容导入失败会留下「元数据已写入但内容为空」的半成品
-    await prisma.$transaction(async (tx: any) => {
+    // 元数据 + 域名绑定 + 清空：轻量操作单独一个事务保证原子性，
+    // 内容站点改在事务外分批提交，避免大备份撞单事务 30s 超时
+    const wsId = await prisma.$transaction(async (tx: any) => {
       let workspace = await tx.workspace.findUnique({
         where: { slug: wsData.slug },
       })
@@ -3222,7 +3254,7 @@ async function importFullBackup(
         })
       }
 
-      // 分类与网址：overwrite 模式先清空该工作区内容。
+      // 清空该工作区旧内容（overwrite）：轻量 deleteMany 留在元数据事务内保证原子性。
       // 该工作区没有任何可导入站点时不执行清空——防止备份中某个空/损坏工作区
       // 借 overwrite 清空线上数据（全量备份的其余工作区正常导入）
       if (mode === 'overwrite') {
@@ -3245,31 +3277,35 @@ async function importFullBackup(
         }
       }
 
-      let order = 0
-      for (const categoryData of normalized.categories) {
-        order++
-        const existingCategory = mode === 'append'
-          ? await tx.category.findFirst({
-              where: { slug: categoryData.slug, workspaceId: wsId },
-            })
-          : null
-        let category = existingCategory
-        if (!category) {
-          category = await tx.category.create({
-            data: {
-              name: categoryData.name,
-              slug: categoryData.slug,
-              icon: categoryData.icon,
-              order: categoryData.order ?? order,
-              workspaceId: wsId,
-            },
+      return wsId
+    }, { timeout: 60_000, maxWait: 10_000 })
+
+    // 分类与站点内容：分批事务写入（importCategorySites 内每批独立提交），
+    // 大备份不再受单个事务 30s 超时限制
+    let order = 0
+    for (const categoryData of normalized.categories) {
+      order++
+      const existingCategory = mode === 'append'
+        ? await prisma.category.findFirst({
+            where: { slug: categoryData.slug, workspaceId: wsId },
           })
-        }
-        await importCategorySites(tx, category.id, categoryData.sites, mode, () => {
-          skippedSites++
+        : null
+      let category: any = existingCategory
+      if (!category) {
+        category = await prisma.category.create({
+          data: {
+            name: categoryData.name,
+            slug: categoryData.slug,
+            icon: categoryData.icon,
+            order: categoryData.order ?? order,
+            workspaceId: wsId,
+          },
         })
       }
-    }, { timeout: 30_000, maxWait: 10_000 })
+      await importCategorySites(category.id, categoryData.sites, mode, () => {
+        skippedSites++
+      })
+    }
   }
 
   // 备份中的默认工作区标记恢复：清掉多默认
@@ -3330,12 +3366,10 @@ export async function importBookmarks(
     const workspace = await getAdminWorkspace()
     const { slugify } = require('transliteration') as { slugify: (s: string) => string }
 
-    // 整体事务化：overwrite 的清空与后续导入同成败，
-    // 中途失败（slug 冲突、连接抖动等）不再留下「旧数据已删、新数据只导一半」的不可逆状态。
-    // 大书签文件逐条写入耗时可观，显式放大默认 5s 的事务超时
-    const { importedCategories, skippedSites } = await prisma.$transaction(async (tx) => {
-      // 覆盖模式：仅清空当前工作区的数据（事务内用 tx 查询，避免事务外读取漏删并发新增）
-      if (mode === 'overwrite') {
+    // 覆盖模式：清空当前工作区单独一个短事务（事务内用 tx 查询，避免事务外读取漏删并发新增），
+    // 站点写入改分批 createMany，大书签文件不再受单个事务 30s 超时限制
+    if (mode === 'overwrite') {
+      await prisma.$transaction(async (tx) => {
         const workspaceCategoryIds = (
           await tx.category.findMany({
             where: { workspaceId: workspace.id },
@@ -3350,107 +3384,115 @@ export async function importBookmarks(
             where: { workspaceId: workspace.id },
           })
         }
+      }, { timeout: 60_000, maxWait: 10_000 })
+    }
+
+    // 追加模式：保留现有数据，只添加新的（限定当前工作区）
+    let currentMaxOrder = 0
+    if (mode === 'append') {
+      const maxOrderCategory = await prisma.category.findFirst({
+        where: { workspaceId: workspace.id },
+        orderBy: { order: 'desc' },
+        select: { order: true },
+      })
+      currentMaxOrder = maxOrderCategory?.order || 0
+    }
+
+    // 书签无截图，站点整体走 createMany 分批插入（每批独立提交）
+    const importedCategories = parsed.categories.length
+    let skippedSites = 0
+    const batchSlugs = new Set<string>()
+    // 批次内 URL 去重：书签文件中同一站点常出现在多个文件夹
+    const seenUrls = new Set<string>()
+    for (const categoryData of parsed.categories) {
+      // 生成分类 slug（中文转拼音）；同名文件夹 slug 冲突时追加序号，
+      // 否则撞 workspaceId+slug 唯一约束会让导入失败
+      const baseSlug = slugify(categoryData.name)
+      let slug = baseSlug
+      let suffix = 2
+      while (batchSlugs.has(slug)) {
+        slug = `${baseSlug}-${suffix}`
+        suffix++
+      }
+      batchSlugs.add(slug)
+
+      // 检查分类是否已存在（追加模式，限定当前工作区）
+      let category: any = null
+      if (mode === 'append') {
+        category = await prisma.category.findFirst({
+          where: { slug, workspaceId: workspace.id },
+        })
       }
 
-      // 追加模式：保留现有数据，只添加新的（限定当前工作区）
-      let currentMaxOrder = 0
+      if (!category) {
+        currentMaxOrder++
+        category = await prisma.category.create({
+          data: {
+            name: categoryData.name,
+            slug,
+            order: currentMaxOrder,
+            workspaceId: workspace.id,
+          },
+        })
+      }
+
+      // 导入网站：append 模式一次性预载该分类已有 url 与最大排序，替代逐条查询
+      let currentSiteOrder = 0
+      const existingUrls = new Set<string>()
       if (mode === 'append') {
-        const maxOrderCategory = await tx.category.findFirst({
-          where: { workspaceId: workspace.id },
+        const existingSites = await prisma.site.findMany({
+          where: { categoryId: category.id },
+          select: { url: true },
+        })
+        for (const s of existingSites) existingUrls.add(s.url)
+        const maxOrderSite = await prisma.site.findFirst({
+          where: { categoryId: category.id },
           orderBy: { order: 'desc' },
           select: { order: true },
         })
-        currentMaxOrder = maxOrderCategory?.order || 0
+        currentSiteOrder = maxOrderSite?.order || 0
       }
 
-      // 导入分类和网站
-      let skipped = 0
-      const batchSlugs = new Set<string>()
-      // 批次内 URL 去重：书签文件中同一站点常出现在多个文件夹
-      const seenUrls = new Set<string>()
-      for (const categoryData of parsed.categories) {
-        // 生成分类 slug（中文转拼音）；同名文件夹 slug 冲突时追加序号，
-        // 否则撞 workspaceId+slug 唯一约束会让整个导入事务回滚
-        const baseSlug = slugify(categoryData.name)
-        let slug = baseSlug
-        let suffix = 2
-        while (batchSlugs.has(slug)) {
-          slug = `${baseSlug}-${suffix}`
-          suffix++
+      const rows: Array<{
+        name: string
+        url: string
+        description: string
+        iconUrl: string | null
+        categoryId: string
+        order: number
+        isPublished: boolean
+      }> = []
+      for (const siteData of categoryData.sites) {
+        // 跳过非 http/https 的非法 URL，防止存储型 XSS
+        if (!isSafeSiteUrl(siteData.url)) {
+          skippedSites++
+          continue
         }
-        batchSlugs.add(slug)
-
-        // 检查分类是否已存在（追加模式，限定当前工作区）
-        let category
-        if (mode === 'append') {
-          category = await tx.category.findFirst({
-            where: { slug, workspaceId: workspace.id },
-          })
+        // 去重：批次内已导入过、或 append 模式下该分类已有同 URL 站点时跳过
+        if (seenUrls.has(siteData.url) || existingUrls.has(siteData.url)) {
+          skippedSites++
+          continue
         }
-
-        if (!category) {
-          currentMaxOrder++
-          category = await tx.category.create({
-            data: {
-              name: categoryData.name,
-              slug,
-              order: currentMaxOrder,
-              workspaceId: workspace.id,
-            },
-          })
-        }
-
-        // 导入网站
-        let currentSiteOrder = 0
-        if (mode === 'append') {
-          const maxOrderSite = await tx.site.findFirst({
-            where: { categoryId: category.id },
-            orderBy: { order: 'desc' },
-            select: { order: true },
-          })
-          currentSiteOrder = maxOrderSite?.order || 0
-        }
-
-        for (const siteData of categoryData.sites) {
-          // 跳过非 http/https 的非法 URL，防止存储型 XSS
-          if (!isSafeSiteUrl(siteData.url)) {
-            skipped++
-            continue
-          }
-          // 去重：批次内已导入过、或 append 模式下该分类已有同 URL 站点时跳过
-          if (seenUrls.has(siteData.url)) {
-            skipped++
-            continue
-          }
-          if (mode === 'append') {
-            const dup = await tx.site.findFirst({
-              where: { url: siteData.url, categoryId: category.id },
-              select: { id: true },
-            })
-            if (dup) {
-              skipped++
-              continue
-            }
-          }
-          seenUrls.add(siteData.url)
-          currentSiteOrder++
-          await tx.site.create({
-            data: {
-              name: siteData.name,
-              url: siteData.url,
-              description: siteData.url, // 使用URL作为描述
-              // 图标地址仅接受 http/https，防止 javascript: 等协议入库
-              iconUrl: siteData.icon && isSafeSiteUrl(siteData.icon) ? siteData.icon : null,
-              categoryId: category.id,
-              order: currentSiteOrder,
-              isPublished: true,
-            },
-          })
-        }
+        seenUrls.add(siteData.url)
+        currentSiteOrder++
+        rows.push({
+          name: siteData.name,
+          url: siteData.url,
+          description: siteData.url, // 使用URL作为描述
+          // 图标地址仅接受 http/https，防止 javascript: 等协议入库
+          iconUrl: siteData.icon && isSafeSiteUrl(siteData.icon) ? siteData.icon : null,
+          categoryId: category.id,
+          order: currentSiteOrder,
+          isPublished: true,
+        })
       }
 
-      return { importedCategories: parsed.categories.length, skippedSites: skipped }
-    }, { timeout: 30_000, maxWait: 10_000 })
+      for (let start = 0; start < rows.length; start += IMPORT_SITE_BATCH_SIZE) {
+        await prisma.site.createMany({
+          data: rows.slice(start, start + IMPORT_SITE_BATCH_SIZE),
+        })
+      }
+    }
 
     // 重新验证缓存
     revalidatePath('/', 'layout')

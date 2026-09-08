@@ -18,11 +18,15 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 大小上限：文件会整体读入内存做 JSON.parse，超大文件可造成内存尖峰
-    const MAX_IMPORT_BYTES = 10 * 1024 * 1024
-    if (file.size > MAX_IMPORT_BYTES) {
+    // 大小上限：文件会整体读入内存做 JSON.parse，超大文件可造成内存尖峰。
+    // 默认 10MB；自部署可通过 MAX_IMPORT_MB 放宽（1~500，非法值回退默认）
+    const maxImportMb = Math.min(
+      Math.max(parseInt(process.env.MAX_IMPORT_MB || '10', 10) || 10, 1),
+      500
+    )
+    if (file.size > maxImportMb * 1024 * 1024) {
       return NextResponse.json(
-        { error: '文件过大（上限 10MB）' },
+        { error: `文件过大（上限 ${maxImportMb}MB，可通过 MAX_IMPORT_MB 环境变量调整）` },
         { status: 413 }
       )
     }

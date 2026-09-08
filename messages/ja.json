@@ -418,6 +418,7 @@
       "chromeFormatTitle": "Chromeブックマーク",
       "chromeFormatDesc": "Chromeなどのブラウザからインポートするブックマーク形式。名前、URL、アイコンのみ含みます。ネストされたフォルダー（例：/クラウド/Cloudflare）は自動的に独立したカテゴリーに分割されます。",
       "importing": "インポート中...",
+      "largeImportTip": "データ量が多い場合、インポートに1〜3分かかることがあります。ページを閉じないでください。",
       "importBtn": "インポート",
       "fileFormatError": "ファイル形式エラー",
       "fileFormatErrorDesc": "JSONバックアップまたはChromeブックマークファイル（.html/.htm）を選択してください",

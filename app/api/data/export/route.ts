@@ -19,7 +19,8 @@ export async function GET(request: NextRequest) {
     }
 
     const suffix = mode === 'full' ? 'full_backup' : 'workspace_backup'
-    return new NextResponse(JSON.stringify(result.data, null, 2), {
+    // 紧凑序列化（不做美化缩进）：导出体积含截图 base64，缩进会额外膨胀 30%~50%
+    return new NextResponse(JSON.stringify(result.data), {
       status: 200,
       headers: {
         'Content-Type': 'application/json; charset=UTF-8',
